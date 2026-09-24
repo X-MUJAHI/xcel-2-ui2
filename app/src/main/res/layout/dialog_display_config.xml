@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:background="#151a22"
+    android:padding="24dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+    <TextView
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#00e5ff"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:text="Edit Display Config"/>
+    <Spinner
+        android:id="@+id/spinner_templates"
+        android:visibility="visible"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:backgroundTint="#00e5ff"/>
+    <EditText
+        android:textColor="#ffffff"
+        android:textColorHint="#9e9e9e"
+        android:id="@+id/et_width"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:hint="Width (e.g. 1080)"
+        android:inputType="number"
+        android:backgroundTint="#00e5ff"/>
+    <EditText
+        android:textColor="#ffffff"
+        android:textColorHint="#9e9e9e"
+        android:id="@+id/et_height"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:hint="Height (e.g. 2400)"
+        android:inputType="number"
+        android:backgroundTint="#00e5ff"/>
+    <EditText
+        android:textColor="#ffffff"
+        android:textColorHint="#9e9e9e"
+        android:id="@+id/et_density"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:hint="Density/DPI (e.g. 420)"
+        android:inputType="number"
+        android:backgroundTint="#00e5ff"/>
+    <Button
+        android:textColor="#ffffff"
+        android:id="@+id/btn_reset_default"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="RESET TO DEFAULT"
+        android:backgroundTint="#2d3748"/>
+</LinearLayout>

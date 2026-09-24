@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/cyber_bg"
+    android:padding="16dp">
+
+    <!-- Top Header -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp">
+
+        <ImageView
+            android:id="@+id/btn_back"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:src="@drawable/ic_back_arrow"
+            android:padding="8dp"
+            android:background="@drawable/stat_box_bg"
+            app:tint="@color/cyber_cyan"
+            android:contentDescription="Back"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="SETTINGS &amp; CONTROLS"
+            android:textColor="@color/cyber_cyan"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.05" />
+    </RelativeLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Script Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_cyber_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="SCRIPT MANAGER"
+                    android:textColor="@color/cyber_cyan"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05"
+                    android:layout_marginBottom="10dp" />
+
+                <TextView
+                    android:id="@+id/tv_current_script"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Current: None"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="14sp"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/tv_available_scripts"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Available Scripts:\nNone"
+                    android:textColor="@color/cyber_text_muted"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="12dp" />
+
+                <Button
+                    android:id="@+id/btn_new_script"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="+ INSTALL NEW SCRIPT"
+                    android:backgroundTint="@color/cyber_card_elevated"
+                    android:textColor="@color/cyber_cyan"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Permissions Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_cyber_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="PERMISSIONS"
+                    android:textColor="@color/cyber_cyan"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05"
+                    android:layout_marginBottom="10dp" />
+
+                <Button
+                    android:id="@+id/btn_shizuku_perm"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="REQUEST SHIZUKU PERMISSION"
+                    android:backgroundTint="@color/cyber_card_elevated"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btn_saf_perm"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="GRANT ANDROID/DATA ACCESS"
+                    android:backgroundTint="@color/cyber_card_elevated"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Game Features Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_cyber_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="GAME ENHANCEMENTS"
+                    android:textColor="@color/cyber_cyan"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Hologram -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="12dp"
+                    android:background="@drawable/stat_box_bg"
+                    android:layout_marginBottom="10dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="HOLOGRAM"
+                        android:textColor="@color/cyber_text_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <Switch
+                        android:id="@+id/switch_hologram"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="@color/cyber_cyan"
+                        android:trackTint="#7700E5FF" />
+                </LinearLayout>
+
+                <!-- Anti-Ban -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="12dp"
+                    android:background="@drawable/stat_box_bg"
+                    android:layout_marginBottom="10dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ANTI - BAN SYSTEM"
+                        android:textColor="@color/cyber_text_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <Switch
+                        android:id="@+id/switch_anti_ban"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="@color/cyber_cyan"
+                        android:trackTint="#7700E5FF" />
+                </LinearLayout>
+
+                <!-- File Operations Toggle -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="12dp"
+                    android:background="@drawable/stat_box_bg"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Shizuku Fast Execution"
+                        android:textColor="@color/cyber_text_primary"
+                        android:textSize="14sp" />
+
+                    <Switch
+                        android:id="@+id/switch_shizuku_ops"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="@color/cyber_cyan"
+                        android:trackTint="#7700E5FF"
+                        android:checked="true" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Maintenance & Cleaner -->
+            <Button
+                android:id="@+id/btn_delete_reports"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="🗑️ DELETE GAME REPORTS"
+                android:backgroundTint="@color/cyber_card_elevated"
+                android:textColor="@color/cyber_red"
+                android:textStyle="bold"
+                android:layout_marginBottom="24dp" />
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

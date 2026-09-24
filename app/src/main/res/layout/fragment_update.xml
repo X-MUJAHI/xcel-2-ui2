@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:background="#121212"
+    android:padding="32dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <TextView
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#ff5252"
+        android:id="@+id/tv_update_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:text="⚠️ UPDATE REQUIRED"/>
+    <TextView
+        android:textSize="14sp"
+        android:textColor="#90a4ae"
+        android:id="@+id/tv_update_version_info"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:text="Current: 1.0"/>
+    <TextView
+        android:textSize="15sp"
+        android:textColor="#e0e0e0"
+        android:gravity="center"
+        android:id="@+id/tv_update_message"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="28dp"
+        android:text="A new version of Xcel-2 is required. Tap below to download the latest update."
+        android:lineSpacingExtra="4dp"/>
+    <Button
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#121212"
+        android:id="@+id/btn_update"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="UPDATE NOW"
+        android:paddingStart="36dp"
+        android:paddingEnd="36dp"
+        android:backgroundTint="#00e5ff"/>
+</LinearLayout>
