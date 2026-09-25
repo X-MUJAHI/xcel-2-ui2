@@ -1,17 +1,25 @@
 package com.example.fragments
 
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.AppOpsManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +36,19 @@ import com.example.ui.PermissionPromptType
 import com.example.utils.FreezeManager
 import com.example.utils.PanelFileManager
 import com.example.utils.RenameUtil
+import com.google.android.gms.ads.AdError
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.FullScreenContentCallback
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class HomeFragment : Fragment() {
 
@@ -48,30 +69,69 @@ class HomeFragment : Fragment() {
     private lateinit var tvGameStatus: TextView
     private var btnCopyLog: Button? = null
 
-    private var isOn = false
+    private var isOn: Boolean = false
     private var countDownTimer: CountDownTimer? = null
-    private var statusAnimator: android.animation.ObjectAnimator? = null
-    private var glowAnimator: android.animation.ObjectAnimator? = null
+    private var statusAnimator: ObjectAnimator? = null
+    private var glowAnimator: ObjectAnimator? = null
+
+    // AdMob Rewarded Ad
+    private var rewardedAd: RewardedAd? = null
+    private var isAdLoading: Boolean = false
+    private val REWARDED_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
 
     private val freezeListener = object : FreezeManager.FreezeStateListener {
         override fun onFreezeStateChanged(isFrozen: Boolean, reason: String) {
             activity?.runOnUiThread {
-                if (isAdded) {
-                    if (isFrozen) {
-                        Toast.makeText(context, "❄️ Server frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
-                    } else {
-                        Toast.makeText(context, "✨ Server unfrozen by admin!", Toast.LENGTH_SHORT).show()
-                    }
-                    updateUIState()
+                if (isFrozen) {
+                    Toast.makeText(context, "❄️ Server is frozen: $reason", Toast.LENGTH_SHORT).show()
                 }
+                updateUIState()
             }
         }
     }
 
+    private val pingHandler = Handler(Looper.getMainLooper())
+    private val pingRunnable = object : Runnable {
+        override fun run() {
+            Thread {
+                var pingMs = -1L
+                try {
+                    val start = System.currentTimeMillis()
+                    val socket = Socket()
+                    socket.connect(InetSocketAddress("8.8.8.8", 53), 1500)
+                    socket.close()
+                    pingMs = System.currentTimeMillis() - start
+                } catch (_: Exception) {}
+
+                activity?.runOnUiThread {
+                    if (isAdded && view != null) {
+                        if (pingMs in 0..999) {
+                            tvPing.text = "$pingMs ms"
+                            tvPing.setTextColor(
+                                when {
+                                    pingMs < 60 -> Color.parseColor("#00E676")
+                                    pingMs < 120 -> Color.parseColor("#00E5FF")
+                                    else -> Color.parseColor("#FF5252")
+                                }
+                            )
+                        } else {
+                            tvPing.text = "-- ms"
+                            tvPing.setTextColor(Color.parseColor("#64748B"))
+                        }
+                    }
+                }
+            }.start()
+            pingHandler.postDelayed(this, 10000)
+        }
+    }
+
     override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_home, container, false)
+
         tvStatus = view.findViewById(R.id.tv_status)
         tvTimer = view.findViewById(R.id.tv_timer)
         btnActivate = view.findViewById(R.id.btn_activate)
@@ -89,60 +149,33 @@ class HomeFragment : Fragment() {
         tvGameStatus = view.findViewById(R.id.tv_game_status)
         btnCopyLog = view.findViewById(R.id.btn_copy_log)
 
+        // Version display
         try {
-            val vers = resources.openRawResource(R.raw.version).bufferedReader().use { it.readText() }.trim()
-            tvVersion.text = "v$vers"
-        } catch (e: Exception) {
+            val vIn = resources.openRawResource(R.raw.version)
+            val reader = BufferedReader(InputStreamReader(vIn))
+            tvVersion.text = "v" + reader.readLine().trim()
+            reader.close()
+        } catch (_: Exception) {
             tvVersion.text = "v1.0"
         }
 
-        tvStatus.setOnClickListener {
-            showDiagnosticsDialog()
-        }
-
-        btnCopyLog?.setOnClickListener {
-            copyDiagnosticsLogToClipboard()
-        }
-
-        view.findViewById<Button>(R.id.btn_telegram)?.setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/xcel1_panel")))
-        }
-
-        view.findViewById<Button>(R.id.btn_instagram)?.setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://instagram.com/x_celestials")))
-        }
-
-        view.findViewById<Button>(R.id.btn_not_working)?.setOnClickListener {
-            AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-                .setTitle("App Not Working?")
-                .setMessage("If you are facing issues, you can follow the tutorial, check system diagnostics, or contact admin for help.")
-                .setPositiveButton("Tutorial") { _, _ ->
-                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://x-link.vercel.app/hologram-tutorial")))
-                }
-                .setNeutralButton("Copy Log") { _, _ ->
-                    copyDiagnosticsLogToClipboard()
-                }
-                .setNegativeButton("Contact Admin") { _, _ ->
-                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://instagram.com/x_celestials")))
-                }
-                .show()
-        }
-
+        // Activate button
         btnActivate.setOnClickListener {
             val ctx = context ?: return@setOnClickListener
             if (FreezeManager.isCurrentlyFrozen(ctx)) {
                 val reason = FreezeManager.getFreezeReason(ctx)
                 Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
+            } else {
+                startDownloadActivation()
             }
-            startDownloadActivation()
         }
 
+        // Toggle power button
         btnTogglePower.setOnClickListener {
             val ctx = context ?: return@setOnClickListener
             if (FreezeManager.isCurrentlyFrozen(ctx)) {
                 val reason = FreezeManager.getFreezeReason(ctx)
-                Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "❄️ Action blocked: Server is frozen by admin.\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             if (isOn) {
@@ -152,22 +185,12 @@ class HomeFragment : Fragment() {
             }
         }
 
+        // Boost button
         btnBoost.setOnClickListener {
-            btnBoost.animate()
-                .scaleX(0.92f).scaleY(0.92f)
-                .setDuration(100)
-                .withEndAction {
-                    btnBoost.animate()
-                        .scaleX(1f).scaleY(1f)
-                        .setDuration(100)
-                        .start()
-                }
-                .start()
-
             Thread {
                 if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
                     val success = RenameUtil.executeShizukuCommand("pm trim-caches 999999G")
-                    requireActivity().runOnUiThread {
+                    activity?.runOnUiThread {
                         if (success) {
                             Toast.makeText(context, "⚡ Device Boosted! Caches cleared.", Toast.LENGTH_SHORT).show()
                         } else {
@@ -175,13 +198,14 @@ class HomeFragment : Fragment() {
                         }
                     }
                 } else {
-                    requireActivity().runOnUiThread {
+                    activity?.runOnUiThread {
                         Toast.makeText(context, "Shizuku is required for Lag Fix / Boost feature.", Toast.LENGTH_SHORT).show()
                     }
                 }
             }.start()
         }
 
+        // OPEN GAME BUTTON with Rewarded Test Ad
         btnOpenGame.setOnClickListener {
             val ctx = context ?: return@setOnClickListener
             if (FreezeManager.isCurrentlyFrozen(ctx)) {
@@ -189,402 +213,209 @@ class HomeFragment : Fragment() {
                 Toast.makeText(ctx, "❄️ Cannot open game: Server is currently frozen by admin.\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, 0)
-            val userType = prefs.getString(MainActivity.KEY_USER_TYPE, null)
-            val launchIntent = requireContext().packageManager.getLaunchIntentForPackage("com.dts.freefiremax")
 
+            val launchIntent = requireContext().packageManager.getLaunchIntentForPackage("com.dts.freefiremax")
             if (launchIntent == null) {
                 Toast.makeText(ctx, "Free Fire MAX not found on this device", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            if (userType == "NORMAL") {
-                val appOps = requireContext().getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
-                val mode = appOps.unsafeCheckOpNoThrow(
-                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                    android.os.Process.myUid(), requireContext().packageName
-                )
-                if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
-                    GlassmorphicDialogHelper.showPermissionPrompt(
-                        requireActivity(),
-                        PermissionPromptType.USAGE_ACCESS,
-                        onPrimary = {
-                            startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                        },
-                        onSecondary = {
-                            showUidSelectionDialog(launchIntent)
-                        }
-                    )
-                    return@setOnClickListener
+            val proceedToGameLaunch = Runnable {
+                executeGameLaunchSequence(launchIntent)
+            }
+
+            // Check if Rewarded Ad is loaded
+            val ad = rewardedAd
+            if (ad != null) {
+                Toast.makeText(ctx, "🎬 Showing rewarded ad before opening game...", Toast.LENGTH_SHORT).show()
+                rewardedAd = null // Consume current ad
+                ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+                    override fun onAdDismissedFullScreenContent() {
+                        loadRewardedAd() // Preload for next time
+                        proceedToGameLaunch.run()
+                    }
+
+                    override fun onAdFailedToShowFullScreenContent(adError: AdError) {
+                        loadRewardedAd()
+                        proceedToGameLaunch.run()
+                    }
                 }
-                showUidSelectionDialog(launchIntent)
+                ad.show(requireActivity()) { rewardItem ->
+                    Toast.makeText(ctx, "🎁 Reward granted! Opening Free Fire MAX...", Toast.LENGTH_SHORT).show()
+                }
             } else {
-                startActivity(launchIntent)
+                // If ad is not ready yet, preload it and proceed to open game without blocking user
+                loadRewardedAd()
+                proceedToGameLaunch.run()
             }
         }
 
-        view.findViewById<ImageButton>(R.id.btn_refresh)?.setOnClickListener {
+        // Refresh button
+        view.findViewById<ImageButton?>(R.id.btn_refresh)?.setOnClickListener {
             updateUIState()
             fetchSystemStats(view)
             Toast.makeText(context, "Refreshed ✓", Toast.LENGTH_SHORT).show()
         }
 
+        // Copy log button
+        btnCopyLog?.setOnClickListener {
+            copyDiagnosticsLogToClipboard()
+        }
+
+        // Help / tutorial button
+        view.findViewById<Button?>(R.id.btn_not_working)?.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                .setTitle("App Not Working?")
+                .setMessage("If you are facing issues, you can follow the tutorial, check system diagnostics, or contact admin for help.")
+                .setPositiveButton("Tutorial") { _, _ ->
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/"))
+                    startActivity(intent)
+                }
+                .setNegativeButton("Diagnostics") { _, _ ->
+                    showDiagnosticsDialog()
+                }
+                .setNeutralButton("Close", null)
+                .show()
+        }
+
+        // Social links
+        view.findViewById<Button?>(R.id.btn_telegram)?.setOnClickListener {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/")))
+            } catch (_: Exception) {}
+        }
+        view.findViewById<Button?>(R.id.btn_instagram)?.setOnClickListener {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://instagram.com/")))
+            } catch (_: Exception) {}
+        }
+
         fetchSystemStats(view)
+        loadRewardedAd()
         return view
     }
 
-    private fun copyToClipboard(text: String, label: String = "Log") {
-        try {
-            val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText(label, text)
-            clipboard.setPrimaryClip(clip)
-            Toast.makeText(context, "Log copied to clipboard! 📋", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, "Failed to copy log: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
+    fun loadRewardedAd() {
+        if (rewardedAd != null || isAdLoading) return
+        val ctx = context ?: return
 
-    private fun getDiagnosticLog(): String {
-        val ctx = context ?: return "Context unavailable"
-        val isStaged = PanelFileManager.areFilesStaged(ctx)
-        val (t1, t2) = PanelFileManager.getTargetPaths(ctx)
-        val d1Exists = RenameUtil.checkDirExists(t1.trimEnd('/'))
-        val d2Exists = RenameUtil.checkDirExists(t2.trimEnd('/'))
-        val shizukuOk = RenameUtil.shizukuAvailable()
-        val isModActive = PanelFileManager.isModOn(ctx)
-        val f1Name = PanelFileManager.getFile1Name(ctx)
-        val f2Name = PanelFileManager.getFile2Name(ctx)
-
-        val sb = StringBuilder()
-        sb.append("=== X-CELESTIALS DIAGNOSTICS LOG ===\n")
-        sb.append("Timestamp: ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())).append("\n")
-        sb.append("Mod State: ").append(if (isModActive) "ON 🟢" else "OFF 🔴").append("\n")
-        sb.append("Files Activated (Staged): ").append(isStaged).append("\n")
-        sb.append("File 1 Name: ").append(f1Name).append("\n")
-        sb.append("File 2 Name: ").append(f2Name).append("\n")
-        sb.append("Shizuku Available & Authorized: ").append(shizukuOk).append("\n")
-        sb.append("Target Path 1: ").append(t1).append(" (Exists: ").append(d1Exists).append(")\n")
-        sb.append("Target Path 2: ").append(t2).append(" (Exists: ").append(d2Exists).append(")\n")
-        sb.append("Last Panel Log: ").append(PanelFileManager.lastLog.ifEmpty { "None" }).append("\n")
-        sb.append("Last Rename/Shizuku Error: ").append(RenameUtil.lastError.ifEmpty { "None" }).append("\n")
-        sb.append("=====================================")
-        return sb.toString()
-    }
-
-    private fun copyDiagnosticsLogToClipboard() {
-        val log = getDiagnosticLog()
-        copyToClipboard(log, "X-Celestials Diagnostics")
-    }
-
-    private fun showDiagnosticsDialog() {
-        Thread {
-            val log = getDiagnosticLog()
-            requireActivity().runOnUiThread {
-                AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-                    .setTitle("System Diagnostics & Log")
-                    .setMessage(log)
-                    .setPositiveButton("OK", null)
-                    .setNeutralButton("COPY LOG") { _, _ ->
-                        copyToClipboard(log, "System Diagnostics")
-                    }
-                    .setNegativeButton("Re-Download Files") { _, _ ->
-                        startDownloadActivation()
-                    }
-                    .show()
-            }
-        }.start()
-    }
-
-    private fun showErrorWithCopyButton(title: String, message: String) {
-        val diag = getDiagnosticLog()
-        val fullLog = "$message\n\n$diag"
-        AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("OK", null)
-            .setNeutralButton("COPY LOG") { _, _ ->
-                copyToClipboard(fullLog, "$title Log")
-            }
-            .show()
-    }
-
-    private val pingHandler = Handler(Looper.getMainLooper())
-    private val pingRunnable = object : Runnable {
-        override fun run() {
-            Thread {
-                try {
-                    val process = Runtime.getRuntime().exec("ping -c 1 -w 2 8.8.8.8")
-                    val returnVal = process.waitFor()
-                    if (returnVal == 0) {
-                        val reader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
-                        var time = "--"
-                        for (line in reader.lines()) {
-                            if (line.contains("time=")) {
-                                time = line.substringAfter("time=").substringBefore(" ")
-                                break
-                            }
-                        }
-                        requireActivity().runOnUiThread { tvPing.text = "${time}ms" }
-                    } else {
-                        requireActivity().runOnUiThread { tvPing.text = "Error" }
-                    }
-                } catch (e: Exception) {
-                    requireActivity().runOnUiThread { tvPing.text = "--" }
+        isAdLoading = true
+        val adRequest = AdRequest.Builder().build()
+        RewardedAd.load(
+            ctx,
+            REWARDED_AD_UNIT_ID,
+            adRequest,
+            object : RewardedAdLoadCallback() {
+                override fun onAdLoaded(ad: RewardedAd) {
+                    rewardedAd = ad
+                    isAdLoading = false
                 }
-            }.start()
-            pingHandler.postDelayed(this, 4000)
-        }
-    }
 
-    override fun onResume() {
-        super.onResume()
-        FreezeManager.registerListener(freezeListener)
-        updateUIState()
-        view?.let { fetchSystemStats(it) }
-        startTimerUpdate()
-        pingHandler.post(pingRunnable)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        FreezeManager.unregisterListener(freezeListener)
-        countDownTimer?.cancel()
-        statusAnimator?.cancel()
-        glowAnimator?.cancel()
-        pingHandler.removeCallbacks(pingRunnable)
-    }
-
-    private fun showUidSelectionDialog(launchIntent: Intent) {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_uid_selection, null)
-        val dialog = AlertDialog.Builder(requireContext(), android.R.style.Theme_Translucent_NoTitleBar)
-            .setView(dialogView)
-            .create()
-
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-
-        val listView = dialogView.findViewById<android.widget.ListView>(R.id.list_uids)
-        val pBar = dialogView.findViewById<ProgressBar>(R.id.progress_loading_uids)
-        val tvNoUids = dialogView.findViewById<TextView>(R.id.tv_no_uids)
-        val btnCancel = dialogView.findViewById<Button>(R.id.btn_cancel_dialog)
-
-        btnCancel.setOnClickListener { dialog.dismiss() }
-
-        pBar.visibility = View.VISIBLE
-        listView.visibility = View.GONE
-        tvNoUids.visibility = View.GONE
-        dialog.show()
-
-        Thread {
-            val uids = RenameUtil.getGameUIDs()
-            requireActivity().runOnUiThread {
-                pBar.visibility = View.GONE
-                if (uids.isEmpty()) {
-                    tvNoUids.visibility = View.VISIBLE
-                } else {
-                    listView.visibility = View.VISIBLE
-                    val adapter = android.widget.ArrayAdapter(requireContext(), R.layout.item_uid, android.R.id.text1, uids)
-                    listView.adapter = adapter
-                    listView.setOnItemClickListener { _, _, _, _ ->
-                        dialog.dismiss()
-                        executeGameLaunchSequence(launchIntent)
-                    }
+                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                    rewardedAd = null
+                    isAdLoading = false
                 }
             }
-        }.start()
+        )
     }
 
     private fun executeGameLaunchSequence(launchIntent: Intent) {
-        val startTime = System.currentTimeMillis()
-        val progressDialog = AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-            .setTitle("Anti-Ban Active")
-            .setMessage("Applying protections and launching game...")
-            .setCancelable(false)
-            .create()
-        progressDialog.show()
+        val prefs = requireActivity().getSharedPreferences("xcel_prefs", Context.MODE_PRIVATE)
+        val userType = prefs.getString("user_type", null)
 
-        val activity = requireActivity() as MainActivity
-        activity.executeTurnOnGlobal { success ->
-            updateUIState()
-            val elapsed = System.currentTimeMillis() - startTime
-            val remainingWait = Math.max(0L, 2500L - elapsed)
+        if (userType == "NORMAL") {
+            val appOps = requireContext().getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            val mode = appOps?.unsafeCheckOpNoThrow(
+                "android:get_usage_stats",
+                Process.myUid(),
+                requireContext().packageName
+            ) ?: 0
 
-            Handler(Looper.getMainLooper()).postDelayed({
-                progressDialog.dismiss()
-                if (success) {
-                    Toast.makeText(context, "Anti-Ban applied! Launching...", Toast.LENGTH_SHORT).show()
-                    val serviceIntent = Intent(requireContext(), com.example.services.GameMonitorService::class.java)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        requireContext().startForegroundService(serviceIntent)
-                    } else {
-                        requireContext().startService(serviceIntent)
+            if (mode != 0) {
+                GlassmorphicDialogHelper.showPermissionPrompt(
+                    requireActivity(),
+                    PermissionPromptType.USAGE_ACCESS,
+                    onPrimary = {
+                        startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    },
+                    onSecondary = {
+                        showUidSelectionDialog(launchIntent)
                     }
-                    startActivity(launchIntent)
-                } else {
-                    val err = RenameUtil.lastError.ifEmpty { PanelFileManager.lastLog.ifEmpty { "Please activate panel first." } }
-                    showErrorWithCopyButton("Launch Error", "Could not turn on protections:\n$err")
-                }
-            }, remainingWait)
+                )
+                return
+            }
+            showUidSelectionDialog(launchIntent)
+            return
         }
+        startActivity(launchIntent)
     }
 
-    private fun updateUIState() {
+    private fun showUidSelectionDialog(launchIntent: Intent) {
+        startActivity(launchIntent)
+    }
+
+    fun updateUIState() {
         val ctx = context ?: return
         Thread {
             val isStaged = PanelFileManager.areFilesStaged(ctx)
             val isModActive = if (isStaged) PanelFileManager.isModOn(ctx) else false
             val isFrozen = FreezeManager.isCurrentlyFrozen(ctx)
 
-            requireActivity().runOnUiThread {
+            activity?.runOnUiThread {
+                if (!isAdded || view == null) return@runOnUiThread
+                isOn = isModActive
+
                 statusAnimator?.cancel()
                 glowAnimator?.cancel()
-                tvStatus.scaleX = 1f
-                tvStatus.scaleY = 1f
-                tvStatus.alpha = 1f
-                btnTogglePower.scaleX = 1f
-                btnTogglePower.scaleY = 1f
-                btnTogglePower.alpha = 1f
+                tvStatus.scaleX = 1.0f
+                tvStatus.scaleY = 1.0f
 
-                if (isFrozen) {
-                    isOn = false
-                    tvStatus.text = "Status: FROZEN ❄️"
-                    tvStatus.setTextColor(Color.parseColor("#00E5FF"))
-
-                    btnTogglePower.text = "FROZEN ❄️"
-                    btnTogglePower.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#37474F"))
-                    btnTogglePower.setTextColor(Color.parseColor("#90A4AE"))
-                    btnTogglePower.isEnabled = false
-                    btnTogglePower.visibility = View.VISIBLE
-                    btnActivate.visibility = View.GONE
-                } else if (!isStaged) {
-                    isOn = false
-                    btnActivate.visibility = View.VISIBLE
-                    btnActivate.isEnabled = true
-                    btnTogglePower.visibility = View.GONE
-
-                    tvStatus.text = "Status: NOT ACTIVATED ⚠️"
-                    tvStatus.setTextColor(Color.parseColor("#FFD740"))
-                } else {
-                    btnActivate.visibility = View.GONE
-                    btnTogglePower.visibility = View.VISIBLE
-                    btnTogglePower.isEnabled = true
-
-                    if (isModActive) {
-                        isOn = true
-                        tvStatus.text = "Status: ON 🟢"
-                        tvStatus.setTextColor(Color.parseColor("#00E676"))
-
+                when {
+                    isFrozen -> {
+                        btnActivate.visibility = View.GONE
+                        btnTogglePower.visibility = View.VISIBLE
+                        btnTogglePower.isEnabled = false
+                        btnTogglePower.text = "FROZEN ❄️"
+                        btnTogglePower.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E2738"))
+                        tvStatus.text = "Server Frozen: ${FreezeManager.getFreezeReason(ctx)}"
+                        tvStatus.setTextColor(Color.parseColor("#FF5252"))
+                    }
+                    !isStaged -> {
+                        btnActivate.visibility = View.VISIBLE
+                        btnActivate.isEnabled = true
+                        btnTogglePower.visibility = View.GONE
+                        tvStatus.text = "Status: NOT ACTIVATED ⚠️"
+                        tvStatus.setTextColor(Color.parseColor("#FFD740"))
+                    }
+                    isModActive -> {
+                        btnActivate.visibility = View.GONE
+                        btnTogglePower.visibility = View.VISIBLE
+                        btnTogglePower.isEnabled = true
                         btnTogglePower.text = "TURN OFF"
                         btnTogglePower.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FF5252"))
-                        btnTogglePower.setTextColor(Color.WHITE)
-
-                        statusAnimator = android.animation.ObjectAnimator.ofPropertyValuesHolder(
-                            tvStatus,
-                            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1.0f, 1.04f),
-                            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1.0f, 1.04f)
-                        ).apply {
-                            duration = 900
-                            repeatCount = android.animation.ObjectAnimator.INFINITE
-                            repeatMode = android.animation.ObjectAnimator.REVERSE
-                            start()
-                        }
-
-                        glowAnimator = android.animation.ObjectAnimator.ofPropertyValuesHolder(
-                            btnTogglePower,
-                            android.animation.PropertyValuesHolder.ofFloat(View.ALPHA, 0.85f, 1.0f),
-                            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 0.98f, 1.01f),
-                            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 0.98f, 1.01f)
-                        ).apply {
-                            duration = 1000
-                            repeatCount = android.animation.ObjectAnimator.INFINITE
-                            repeatMode = android.animation.ObjectAnimator.REVERSE
-                            start()
-                        }
-                    } else {
-                        isOn = false
-                        tvStatus.text = "Status: OFF 🔴"
-                        tvStatus.setTextColor(Color.parseColor("#FF5252"))
-
+                        tvStatus.text = "Status: ACTIVATED 🟢"
+                        tvStatus.setTextColor(Color.parseColor("#00E676"))
+                        startTimerUpdate()
+                    }
+                    else -> {
+                        btnActivate.visibility = View.GONE
+                        btnTogglePower.visibility = View.VISIBLE
+                        btnTogglePower.isEnabled = true
                         btnTogglePower.text = "TURN ON"
                         btnTogglePower.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E5FF"))
-                        btnTogglePower.setTextColor(Color.parseColor("#0B0E14"))
+                        tvStatus.text = "Status: READY (OFF) ⚪"
+                        tvStatus.setTextColor(Color.parseColor("#94A3B8"))
+                        tvTimer.text = "00:00:00"
+                        countDownTimer?.cancel()
                     }
                 }
             }
         }.start()
     }
 
-    private fun startTimerUpdate() {
-        countDownTimer?.cancel()
-        tvTimer.text = "Timer: Unlimited"
-    }
-
-    private fun startDownloadActivation() {
-        val ctx = context ?: return
-        if (FreezeManager.isCurrentlyFrozen(ctx)) {
-            val reason = FreezeManager.getFreezeReason(ctx)
-            Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        progressBar.visibility = View.VISIBLE
-        progressBar.isIndeterminate = true
-        tvProgress.visibility = View.VISIBLE
-        tvProgress.text = "Connecting to Firebase..."
-        btnActivate.isEnabled = false
-
-        PanelFileManager.fetchManifestFromFirestore(
-            context = ctx,
-            onSuccess = { manifest ->
-                requireActivity().runOnUiThread {
-                    tvProgress.text = "Downloading 4 files..."
-                    progressBar.isIndeterminate = false
-                    progressBar.progress = 0
-                }
-
-                PanelFileManager.downloadAndStageAllFiles(
-                    context = ctx,
-                    manifest = manifest,
-                    onProgress = { status, percent ->
-                        requireActivity().runOnUiThread {
-                            tvProgress.text = status
-                            progressBar.isIndeterminate = (percent <= 0)
-                            progressBar.progress = percent
-                        }
-                    },
-                    onComplete = { success, errorMsg ->
-                        requireActivity().runOnUiThread {
-                            progressBar.visibility = View.GONE
-                            tvProgress.visibility = View.GONE
-                            btnActivate.isEnabled = true
-
-                            if (success) {
-                                Toast.makeText(ctx, "Activation successful! All 4 files ready.", Toast.LENGTH_LONG).show()
-                                updateUIState()
-                            } else {
-                                val err = errorMsg ?: "Unknown error downloading files"
-                                Toast.makeText(ctx, "Activation failed: $err", Toast.LENGTH_LONG).show()
-                                showErrorWithCopyButton("Activation Error", err)
-                                updateUIState()
-                            }
-                        }
-                    }
-                )
-            },
-            onError = { err ->
-                requireActivity().runOnUiThread {
-                    progressBar.visibility = View.GONE
-                    tvProgress.visibility = View.GONE
-                    btnActivate.isEnabled = true
-                    Toast.makeText(ctx, "Failed to load config: $err", Toast.LENGTH_LONG).show()
-                    showErrorWithCopyButton("Configuration Needed", err)
-                    updateUIState()
-                }
-            }
-        )
-    }
-
     private fun handleTurnOn() {
-        val activity = requireActivity() as MainActivity
+        val activity = activity as? MainActivity ?: return
         btnTogglePower.isEnabled = false
         activity.executeTurnOnGlobal { success ->
             btnTogglePower.isEnabled = true
@@ -601,144 +432,199 @@ class HomeFragment : Fragment() {
     }
 
     private fun handleTurnOff() {
-        val activity = requireActivity() as MainActivity
+        val activity = activity as? MainActivity ?: return
         btnTogglePower.isEnabled = false
-        activity.executeTurnOffGlobal { result ->
+        activity.executeTurnOffGlobal { err ->
             btnTogglePower.isEnabled = true
-            if (result == "SUCCESS") {
+            if (err == null) {
                 Toast.makeText(context, "Mod turned OFF 🔴", Toast.LENGTH_SHORT).show()
+                countDownTimer?.cancel()
+                tvTimer.text = "00:00:00"
             } else {
-                val err = RenameUtil.lastError.ifEmpty { PanelFileManager.lastLog.ifEmpty { "Check destination folders." } }
                 Toast.makeText(context, "Failed to turn OFF:\n$err", Toast.LENGTH_LONG).show()
                 showErrorWithCopyButton("Turn OFF Issue", "Could not turn OFF mod:\n$err")
             }
             updateUIState()
-            countDownTimer?.cancel()
-            tvTimer.text = "Timer: --"
         }
     }
 
-    private fun fetchSystemStats(view: View) {
-        try {
-            val bm = requireContext().getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
-            val batLevel = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            tvBattery.text = "$batLevel%"
-        } catch (e: Exception) {
-            tvBattery.text = "--%"
+    fun startDownloadActivation() {
+        val ctx = context ?: return
+        if (FreezeManager.isCurrentlyFrozen(ctx)) {
+            val reason = FreezeManager.getFreezeReason(ctx)
+            Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
+            return
         }
 
-        try {
-            val windowManager = requireContext().getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-            val display = windowManager.defaultDisplay
-            val refreshRate = display.refreshRate
-            tvFps.text = "${refreshRate.toInt()} FPS"
-        } catch (e: Exception) {
-            tvFps.text = "-- FPS"
-        }
+        progressBar.visibility = View.VISIBLE
+        progressBar.isIndeterminate = true
+        tvProgress.visibility = View.VISIBLE
+        tvProgress.text = "Connecting to Firebase..."
+        btnActivate.isEnabled = false
 
-        try {
-            val appOps = requireContext().getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
-            val mode = appOps.unsafeCheckOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), requireContext().packageName)
-            if (mode == android.app.AppOpsManager.MODE_ALLOWED || mode == android.app.AppOpsManager.MODE_DEFAULT) {
-                val usageStatsManager = requireContext().getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
-                val cal = java.util.Calendar.getInstance()
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                cal.set(java.util.Calendar.MINUTE, 0)
-                cal.set(java.util.Calendar.SECOND, 0)
-                val todayStart = cal.timeInMillis
-                val todayEnd = System.currentTimeMillis()
-
-                var timeToday = 0L
-                val eventsToday = usageStatsManager.queryEvents(todayStart, todayEnd)
-                var lastTime = todayStart
-                val event = android.app.usage.UsageEvents.Event()
-                var isForeground = false
-                var currentForegroundPkg: String? = null
-
-                while (eventsToday.hasNextEvent()) {
-                    eventsToday.getNextEvent(event)
-                    if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED || event.eventType == 1) {
-                        currentForegroundPkg = event.packageName
-                    } else if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED || event.eventType == 2 || event.eventType == 23) {
-                        if (currentForegroundPkg == event.packageName) {
-                            currentForegroundPkg = null
+        PanelFileManager.fetchManifestFromFirestore(
+            ctx,
+            onSuccess = { manifest ->
+                progressBar.isIndeterminate = false
+                PanelFileManager.downloadAndStageAllFiles(
+                    ctx,
+                    manifest,
+                    onProgress = { status, percent ->
+                        activity?.runOnUiThread {
+                            tvProgress.text = "$status ($percent%)"
+                            progressBar.progress = percent
                         }
-                    }
-
-                    if (event.packageName == "com.dts.freefiremax") {
-                        if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED || event.eventType == 1) {
-                            if (!isForeground) {
-                                isForeground = true
-                                lastTime = event.timeStamp
-                            }
-                        } else if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED || event.eventType == 2 || event.eventType == 23) {
-                            if (isForeground) {
-                                isForeground = false
-                                timeToday += (event.timeStamp - lastTime)
+                    },
+                    onComplete = { success, errorMsg ->
+                        activity?.runOnUiThread {
+                            progressBar.visibility = View.GONE
+                            tvProgress.visibility = View.GONE
+                            btnActivate.isEnabled = true
+                            if (success) {
+                                Toast.makeText(ctx, "All files staged and verified! ✓", Toast.LENGTH_SHORT).show()
+                                updateUIState()
+                            } else {
+                                val err = errorMsg ?: "Unknown error"
+                                Toast.makeText(ctx, "Activation failed: $err", Toast.LENGTH_LONG).show()
+                                showErrorWithCopyButton("Activation Failed", err)
                             }
                         }
                     }
+                )
+            },
+            onError = { err ->
+                activity?.runOnUiThread {
+                    progressBar.visibility = View.GONE
+                    tvProgress.visibility = View.GONE
+                    btnActivate.isEnabled = true
+                    Toast.makeText(ctx, "Could not fetch configuration: $err", Toast.LENGTH_LONG).show()
+                    showErrorWithCopyButton("Download Error", "Could not load settings:\n$err")
                 }
-
-                val isActuallyForeground = (currentForegroundPkg == "com.dts.freefiremax")
-                if (isForeground) {
-                    timeToday += (todayEnd - lastTime)
-                }
-
-                val hoursToday = timeToday / 3600000
-                val minsToday = (timeToday % 3600000) / 60000
-                tvPlaytimeToday.text = "Today: ${hoursToday}h ${minsToday}m"
-
-                if (isActuallyForeground) {
-                    tvGameStatus.text = "Active"
-                    tvGameStatus.setTextColor(Color.parseColor("#00E676"))
-                } else {
-                    tvGameStatus.text = "Inactive"
-                    tvGameStatus.setTextColor(Color.parseColor("#FF5252"))
-                }
-
-                // Yesterday stats
-                cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
-                val yesterdayStart = cal.timeInMillis
-                val yesterdayEnd = todayStart
-
-                var timeYesterday = 0L
-                val eventsYesterday = usageStatsManager.queryEvents(yesterdayStart, yesterdayEnd)
-                var lastTimeY = yesterdayStart
-                isForeground = false
-                while (eventsYesterday.hasNextEvent()) {
-                    eventsYesterday.getNextEvent(event)
-                    if (event.packageName == "com.dts.freefiremax") {
-                        if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED || event.eventType == 1) {
-                            if (!isForeground) {
-                                isForeground = true
-                                lastTimeY = event.timeStamp
-                            }
-                        } else if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED || event.eventType == 2) {
-                            if (isForeground) {
-                                isForeground = false
-                                timeYesterday += (event.timeStamp - lastTimeY)
-                            }
-                        }
-                    }
-                }
-                if (isForeground) {
-                    timeYesterday += (yesterdayEnd - lastTimeY)
-                }
-
-                val hoursYest = timeYesterday / 3600000
-                val minsYest = (timeYesterday % 3600000) / 60000
-                tvPlaytimeYesterday.text = "Yesterday: ${hoursYest}h ${minsYest}m"
-
-            } else {
-                tvPlaytimeToday.text = "Tap to enable permission"
-                tvPlaytimeToday.setOnClickListener {
-                    startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                }
-                tvPlaytimeYesterday.text = "Stats hidden"
             }
-        } catch (e: Exception) {
-            tvPlaytimeToday.text = "Feature unavailable"
+        )
+    }
+
+    private fun startTimerUpdate() {
+        countDownTimer?.cancel()
+        countDownTimer = object : CountDownTimer(3600000, 1000) {
+            var elapsedSeconds = 0L
+            override fun onTick(millisUntilFinished: Long) {
+                elapsedSeconds++
+                val hours = elapsedSeconds / 3600
+                val minutes = (elapsedSeconds % 3600) / 60
+                val seconds = elapsedSeconds % 60
+                tvTimer.text = String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+            }
+
+            override fun onFinish() {
+                tvTimer.text = "00:00:00"
+            }
+        }.start()
+    }
+
+    private fun fetchSystemStats(view: View) {
+        val ctx = context ?: return
+
+        // Battery
+        try {
+            val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            if (level >= 0) {
+                tvBattery.text = "$level%"
+            } else {
+                tvBattery.text = "-- %"
+            }
+        } catch (_: Exception) {
+            tvBattery.text = "-- %"
         }
+
+        // FPS / Refresh rate
+        try {
+            val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                activity?.display
+            } else {
+                @Suppress("DEPRECATION")
+                activity?.windowManager?.defaultDisplay
+            }
+            val refreshRate = display?.refreshRate?.toInt() ?: 60
+            tvFps.text = "$refreshRate Hz"
+        } catch (_: Exception) {
+            tvFps.text = "60 Hz"
+        }
+
+        // Game status
+        tvGameStatus.text = if (isOn) "Active" else "Inactive"
+        tvGameStatus.setTextColor(
+            if (isOn) Color.parseColor("#00E676") else Color.parseColor("#FF5252")
+        )
+    }
+
+    private fun showDiagnosticsDialog() {
+        val log = getDiagnosticLog()
+        AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setTitle("System Diagnostics & Log")
+            .setMessage(log)
+            .setPositiveButton("OK", null)
+            .setNeutralButton("COPY LOG") { _, _ ->
+                copyToClipboard(log, "System Diagnostics")
+            }
+            .show()
+    }
+
+    private fun showErrorWithCopyButton(title: String, message: String) {
+        val fullLog = "$title\n$message\n\n--- System Diagnostics ---\n${getDiagnosticLog()}"
+        AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .setNeutralButton("COPY DIAGNOSTICS") { _, _ ->
+                copyToClipboard(fullLog, "$title Log")
+            }
+            .show()
+    }
+
+    private fun getDiagnosticLog(): String {
+        val sb = StringBuilder()
+        sb.append("Time: ").append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())).append("\n")
+        sb.append("Device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n")
+        context?.let { ctx ->
+            sb.append("Staged: ").append(PanelFileManager.areFilesStaged(ctx)).append("\n")
+            sb.append("ModOn: ").append(PanelFileManager.isModOn(ctx)).append("\n")
+            sb.append("Frozen: ").append(FreezeManager.isCurrentlyFrozen(ctx)).append("\n")
+        }
+        sb.append("Shizuku: ").append(RenameUtil.shizukuAvailable()).append("\n")
+        sb.append("Last Log: ").append(PanelFileManager.lastLog).append("\n")
+        return sb.toString()
+    }
+
+    private fun copyDiagnosticsLogToClipboard() {
+        val log = getDiagnosticLog()
+        copyToClipboard(log, "Diagnostics Log")
+    }
+
+    private fun copyToClipboard(text: String, label: String = "Log") {
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText(label, text))
+            Toast.makeText(context, "Log copied to clipboard! 📋", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Failed to copy log: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        FreezeManager.registerListener(freezeListener)
+        updateUIState()
+        view?.let { fetchSystemStats(it) }
+        pingHandler.post(pingRunnable)
+        loadRewardedAd()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        FreezeManager.unregisterListener(freezeListener)
+        pingHandler.removeCallbacks(pingRunnable)
+        countDownTimer?.cancel()
     }
 }

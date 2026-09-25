@@ -1,8 +1,6 @@
 {
   "name": "Xcel-2",
-  "description": "System utility and game optimizer panel",
+  "description": "Game optimizer and control panel for Free Fire MAX",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
