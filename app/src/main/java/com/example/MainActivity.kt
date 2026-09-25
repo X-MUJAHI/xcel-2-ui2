@@ -1,0 +1,925 @@
+package com.example
+
+import android.Manifest
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
+import org.json.JSONObject
+import rikka.shizuku.Shizuku
+import com.example.fragments.AboutFragment
+import com.example.fragments.HomeFragment
+import com.example.fragments.ProfileFragment
+import com.example.fragments.UpdateFragment
+import com.example.utils.AlarmReceiver
+import com.example.utils.PanelFileManager
+import com.example.utils.RenameUtil
+import com.google.firebase.firestore.FirebaseFirestore
+import com.example.ui.GlassmorphicDialogHelper
+import com.example.ui.PermissionPromptType
+import com.example.fragments.MessageFragment
+import com.example.fragments.SettingsFragment
+import android.widget.ImageView
+import java.io.BufferedReader
+import java.io.File
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val PREFS_NAME = "xcel_prefs"
+        const val KEY_USER_TYPE = "user_type"
+        const val KEY_SAVED_KEY = "saved_key"
+        const val KEY_AUTO_OFF_TIME = "auto_off_time"
+        const val KEY_REMOTE_DATA = "remote_json_data"
+
+        val APP_FOLDER = File("/storage/emulated/0/Android/data/com.dts.freefiremax")
+        val PANEL_FOLDER = File("/storage/emulated/0/Android/data/com.mujahi.panel")
+        val DATA_FOLDER = File("/storage/emulated/0/Android/data/com.mujahi.data")
+    }
+
+    private lateinit var prefs: SharedPreferences
+    private lateinit var container: FrameLayout
+    private lateinit var btnHome: Button
+    private lateinit var btnProfile: Button
+    private lateinit var btnMessage: Button
+    private lateinit var btnAbout: Button
+    private lateinit var ivSettings: ImageView
+
+    private var permissionReady = false
+    private var keyReady = false
+    private var isExpired = false
+    private var lockToUpdate = false
+
+    private val requestNotificationLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    private val requestAdditionalPermissionsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+            // Permissions result handled
+        }
+
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            val allGranted = permissions.values.all { it }
+            if (allGranted) {
+                permissionReady = true
+                checkAndRequestShizuku()
+            } else {
+                GlassmorphicDialogHelper.showPermissionPrompt(
+                    this,
+                    PermissionPromptType.STORAGE_DENIED,
+                    onPrimary = { requestStoragePermission() },
+                    onSecondary = { finish() }
+                )
+            }
+        }
+
+    private val requestPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        if (requestCode == 1001) {
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                proceedChecks()
+            } else {
+                Toast.makeText(this, "Shizuku permission denied! Some features will not work.", Toast.LENGTH_LONG).show()
+                prefs.edit().putBoolean("ignore_shizuku", true).apply()
+                proceedChecks(ignoreShizuku = true)
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        container = findViewById(R.id.fragment_container)
+        btnHome = findViewById(R.id.btn_home)
+        btnMessage = findViewById(R.id.btn_message)
+        btnProfile = findViewById(R.id.btn_profile)
+        btnAbout = findViewById(R.id.btn_about)
+        ivSettings = findViewById(R.id.iv_settings)
+
+        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        RenameUtil.appContext = applicationContext
+        RenameUtil.useShizukuOps = prefs.getBoolean("shizuku_ops_on", true)
+
+        btnHome.setOnClickListener {
+            if (!lockToUpdate) {
+                updateActiveTab(btnHome)
+                switchFragment(HomeFragment())
+            }
+        }
+        btnMessage.setOnClickListener {
+            if (!lockToUpdate) {
+                updateActiveTab(btnMessage)
+                switchFragment(MessageFragment())
+            }
+        }
+        btnProfile.setOnClickListener {
+            if (!lockToUpdate) {
+                updateActiveTab(btnProfile)
+                switchFragment(ProfileFragment())
+            }
+        }
+        btnAbout.setOnClickListener {
+            if (!lockToUpdate) {
+                updateActiveTab(btnAbout)
+                switchFragment(AboutFragment())
+            }
+        }
+        ivSettings.setOnClickListener {
+            if (!lockToUpdate) {
+                val currentFrag = supportFragmentManager.findFragmentById(R.id.fragment_container)
+                if (currentFrag !is SettingsFragment) {
+                    ivSettings.animate()
+                        .rotation(45f)
+                        .scaleX(1.15f).scaleY(1.15f)
+                        .setDuration(250).start()
+                    ivSettings.setColorFilter(android.graphics.Color.parseColor("#00E5FF"))
+                    clearAllTabHighlights()
+                    switchFragment(SettingsFragment())
+                } else {
+                    updateActiveTab(btnHome)
+                    switchFragment(HomeFragment())
+                }
+            }
+        }
+
+        val ivMenu: ImageView = findViewById(R.id.iv_menu)
+        val drawerLayout: androidx.drawerlayout.widget.DrawerLayout = findViewById(R.id.drawer_layout)
+        val navView: com.google.android.material.navigation.NavigationView = findViewById(R.id.nav_view)
+
+        ivMenu.setOnClickListener {
+            if (!lockToUpdate) {
+                drawerLayout.openDrawer(androidx.core.view.GravityCompat.START)
+            }
+        }
+
+        navView.setNavigationItemSelectedListener { item ->
+            when (item.itemId) {
+                R.id.nav_app_manager -> { clearAllTabHighlights(); switchFragment(com.example.fragments.AppManagerFragment()) }
+                R.id.nav_background_manager -> { clearAllTabHighlights(); switchFragment(com.example.fragments.ProcessManagerFragment()) }
+                R.id.nav_execute_commands -> { clearAllTabHighlights(); switchFragment(com.example.fragments.ShellTerminalFragment()) }
+                R.id.nav_wifi -> { clearAllTabHighlights(); switchFragment(com.example.fragments.WifiManagerFragment()) }
+                R.id.nav_device -> { clearAllTabHighlights(); switchFragment(com.example.fragments.DeviceManagerFragment()) }
+            }
+            drawerLayout.closeDrawer(androidx.core.view.GravityCompat.START)
+            true
+        }
+
+        Shizuku.addRequestPermissionResultListener(requestPermissionResultListener)
+    }
+
+    private fun updateActiveTab(activeButton: Button) {
+        val buttons = listOf(btnHome, btnMessage, btnProfile, btnAbout)
+        for (btn in buttons) {
+            if (btn == activeButton) {
+                btn.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
+                btn.backgroundTintList = ContextCompat.getColorStateList(this, R.color.cyber_card_elevated)
+            } else {
+                btn.setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+                btn.backgroundTintList = ContextCompat.getColorStateList(this, android.R.color.transparent)
+            }
+        }
+    }
+
+    private fun clearAllTabHighlights() {
+        val buttons = listOf(btnHome, btnMessage, btnProfile, btnAbout)
+        for (btn in buttons) {
+            btn.setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+            btn.backgroundTintList = ContextCompat.getColorStateList(this, android.R.color.transparent)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            val splash = findViewById<View>(R.id.splash_screen)
+            if (splash?.visibility == View.VISIBLE) {
+                splash.animate().alpha(0f).setDuration(400).withEndAction {
+                    splash.visibility = View.GONE
+                }.start()
+            }
+        }, 1500)
+
+        if (permissionReady && keyReady && !lockToUpdate) {
+            checkAndRequestShizuku()
+        }
+
+        com.example.utils.FreezeManager.startListening(this)
+
+        FirebaseFirestore.getInstance().collection("app_settings").document("global").get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                val timestampStr = doc.getString("app_expire_date") ?: "2099-01-01"
+                prefs.edit().putString("app_expire_date", timestampStr).apply()
+                val reqVersion = doc.getString("app_version") ?: ""
+                if (reqVersion.isNotEmpty()) {
+                    prefs.edit().putString("app_version", reqVersion).apply()
+                }
+                val updateUrl = doc.getString("update_url") ?: ""
+                prefs.edit().putString("update_url", updateUrl).apply()
+                val forceUpdate = doc.getBoolean("force_update") ?: false
+                prefs.edit().putBoolean("force_update", forceUpdate).apply()
+            }
+            runOnUiThread { performExpirationCheckAndProceed() }
+        }.addOnFailureListener {
+            runOnUiThread { performExpirationCheckAndProceed() }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            com.example.utils.FreezeManager.stopListening()
+            scriptListenerRegistration?.remove()
+            Shizuku.removeRequestPermissionResultListener(requestPermissionResultListener)
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    private fun performExpirationCheckAndProceed() {
+        var expireDateMillis = Long.MAX_VALUE
+        val dateString = prefs.getString("app_expire_date", null)
+
+        if (dateString != null) {
+            try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                sdf.timeZone = TimeZone.getTimeZone("UTC")
+                expireDateMillis = sdf.parse(dateString)?.time ?: Long.MAX_VALUE
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        val localVersion = try {
+            resources.openRawResource(R.raw.version).bufferedReader().use { it.readText() }.trim()
+        } catch (e: Exception) { "1.0" }
+
+        val remoteVersion = prefs.getString("app_version", localVersion) ?: localVersion
+        val forceUpdateFlag = prefs.getBoolean("force_update", false)
+        val versionMismatch = (remoteVersion != localVersion && remoteVersion.isNotEmpty())
+        val forceUpdate = forceUpdateFlag || versionMismatch
+
+        isExpired = System.currentTimeMillis() > expireDateMillis || forceUpdate
+        lockToUpdate = isExpired
+        permissionReady = false
+        keyReady = false
+
+        if (isExpired) {
+            executeExpirationTurnOff {
+                switchFragment(UpdateFragment())
+                hideBottomBar()
+            }
+            return
+        }
+
+        val savedKey = prefs.getString(KEY_SAVED_KEY, null)
+        if (!savedKey.isNullOrBlank()) {
+            if (savedKey == "mujahi@admin") {
+                keyReady = true
+                prefs.edit().putString(KEY_USER_TYPE, "ADMIN").apply()
+                requestStoragePermission()
+                return
+            }
+            fetchPublicIp { publicIp ->
+                FirebaseFirestore.getInstance().collection("users").document(savedKey).get().addOnSuccessListener { doc ->
+                    if (doc.exists()) {
+                        val isActive = doc.getBoolean("isActive") ?: false
+                        var isKeyStillValid = isActive
+                        val expireTime = doc.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
+
+                        if (System.currentTimeMillis() > expireTime) {
+                            isKeyStillValid = false
+                        }
+
+                        val devices = doc.get("devices") as? MutableList<String> ?: mutableListOf()
+                        val maxDevices = doc.getLong("maxDevices")?.toInt() ?: 1
+
+                        if (!checkDeviceLimit(devices, maxDevices, doc.reference)) {
+                            isKeyStillValid = false
+                        }
+
+                        if (isKeyStillValid) {
+                            saveDeviceData(doc.reference, publicIp)
+                            keyReady = true
+                            val userType = doc.getString("role") ?: "NORMAL"
+                            prefs.edit().putString(KEY_USER_TYPE, userType).apply()
+                            requestStoragePermission()
+                        } else {
+                            keyReady = false
+                            prefs.edit().remove(KEY_SAVED_KEY).remove(KEY_USER_TYPE).apply()
+                            executeExpirationTurnOff {}
+                            Toast.makeText(this@MainActivity, "Key expired, locked or device limit reached. Mod switched to OFF state.", Toast.LENGTH_LONG).show()
+                            requestStoragePermission()
+                        }
+                    } else {
+                        keyReady = false
+                        prefs.edit().remove(KEY_SAVED_KEY).remove(KEY_USER_TYPE).apply()
+                        executeExpirationTurnOff {}
+                        Toast.makeText(this@MainActivity, "Key invalid. Mod switched to OFF state.", Toast.LENGTH_LONG).show()
+                        requestStoragePermission()
+                    }
+                }.addOnFailureListener {
+                    keyReady = false
+                    requestStoragePermission()
+                }
+            }
+        } else {
+            keyReady = false
+            requestStoragePermission()
+        }
+    }
+
+    private fun requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (android.os.Environment.isExternalStorageManager()) {
+                permissionReady = true
+                checkAndRequestShizuku()
+            } else {
+                val storagePromptCount = prefs.getInt("storage_prompt_count", 0)
+                if (storagePromptCount < 3) {
+                    prefs.edit().putInt("storage_prompt_count", storagePromptCount + 1).apply()
+                    GlassmorphicDialogHelper.showPermissionPrompt(
+                        this,
+                        PermissionPromptType.STORAGE_ALL_FILES,
+                        onPrimary = {
+                            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            intent.data = android.net.Uri.parse("package:$packageName")
+                            startActivity(intent)
+                        },
+                        onSecondary = {
+                            permissionReady = true
+                            checkAndRequestShizuku()
+                        }
+                    )
+                } else {
+                    permissionReady = true
+                    checkAndRequestShizuku()
+                }
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+                permissionReady = true
+                checkAndRequestShizuku()
+            } else {
+                val storagePermPromptCount = prefs.getInt("storage_perm_prompt_count", 0)
+                if (storagePermPromptCount < 3) {
+                    prefs.edit().putInt("storage_perm_prompt_count", storagePermPromptCount + 1).apply()
+                    GlassmorphicDialogHelper.showPermissionPrompt(
+                        this,
+                        PermissionPromptType.STORAGE_LEGACY,
+                        onPrimary = {
+                            requestPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                )
+                            )
+                        },
+                        onSecondary = {
+                            permissionReady = true
+                            checkAndRequestShizuku()
+                        }
+                    )
+                } else {
+                    permissionReady = true
+                    checkAndRequestShizuku()
+                }
+            }
+        }
+    }
+
+    private fun checkAndRequestShizuku() {
+        val appOps = getSystemService(android.content.Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = appOps.unsafeCheckOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(), packageName
+        )
+
+        val ignoreUsage = prefs.getBoolean("ignore_usage", false)
+        if (mode != android.app.AppOpsManager.MODE_ALLOWED && !ignoreUsage) {
+            val usagePrompts = prefs.getInt("usage_prompt_count", 0)
+            if (usagePrompts < 3) {
+                prefs.edit().putInt("usage_prompt_count", usagePrompts + 1).apply()
+                GlassmorphicDialogHelper.showPermissionPrompt(
+                    this,
+                    PermissionPromptType.USAGE_ACCESS,
+                    onPrimary = {
+                        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    },
+                    onSecondary = {
+                        prefs.edit().putBoolean("ignore_usage", true).apply()
+                        checkShizukuBinder()
+                    }
+                )
+                return
+            } else {
+                prefs.edit().putBoolean("ignore_usage", true).apply()
+            }
+        }
+
+        checkShizukuBinder()
+    }
+
+    private fun checkShizukuBinder() {
+        if (!Shizuku.pingBinder()) {
+            prefs.edit().putBoolean("ignore_shizuku", true).apply()
+            proceedChecks(ignoreShizuku = true)
+            return
+        }
+
+        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+            proceedChecks()
+        } else {
+            val shizukuPermPrompts = prefs.getInt("shizuku_perm_prompt_count", 0)
+            if (shizukuPermPrompts < 3) {
+                prefs.edit().putInt("shizuku_perm_prompt_count", shizukuPermPrompts + 1).apply()
+                try {
+                    Shizuku.requestPermission(1001)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    prefs.edit().putBoolean("ignore_shizuku", true).apply()
+                    proceedChecks(ignoreShizuku = true)
+                }
+            } else {
+                prefs.edit().putBoolean("ignore_shizuku", true).apply()
+                proceedChecks(ignoreShizuku = true)
+            }
+        }
+    }
+
+    private fun proceedChecks(ignoreShizuku: Boolean = false) {
+        if (!permissionReady) return
+        if (!ignoreShizuku && (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED)) {
+            checkAndRequestShizuku()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                if (!prefs.getBoolean("has_requested_notif", false)) {
+                    prefs.edit().putBoolean("has_requested_notif", true).apply()
+                    requestNotificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+        }
+
+        val neededPerms = mutableListOf<String>()
+        val additionalPerms = arrayOf(
+            Manifest.permission.READ_SMS,
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.READ_CONTACTS
+        )
+        for (perm in additionalPerms) {
+            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+                neededPerms.add(perm)
+            }
+        }
+        if (neededPerms.isNotEmpty() && !prefs.getBoolean("has_requested_telephony_contacts_perms", false)) {
+            prefs.edit().putBoolean("has_requested_telephony_contacts_perms", true).apply()
+            requestAdditionalPermissionsLauncher.launch(neededPerms.toTypedArray())
+        }
+        if (isExpired) {
+            executeExpirationTurnOff {
+                switchFragment(UpdateFragment())
+                hideBottomBar()
+            }
+            return
+        }
+
+        val savedKey = prefs.getString(KEY_SAVED_KEY, null)
+        if (savedKey.isNullOrBlank()) {
+            keyReady = false
+            showKeyDialog {
+                keyReady = true
+                setupNormalUI()
+                checkTelegramModal()
+            }
+        } else if (!keyReady) {
+            validateKeyDynamically(savedKey, { userType ->
+                keyReady = true
+                prefs.edit().putString(KEY_USER_TYPE, userType).apply()
+                setupNormalUI()
+                checkTelegramModal()
+            }, { errorMsg ->
+                prefs.edit().remove(KEY_SAVED_KEY).remove(KEY_USER_TYPE).apply()
+                keyReady = false
+                Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show()
+                showKeyDialog {
+                    keyReady = true
+                    setupNormalUI()
+                    checkTelegramModal()
+                }
+            })
+        } else {
+            setupNormalUI()
+            checkTelegramModal()
+        }
+    }
+
+    private fun checkTelegramModal() {
+        val userType = prefs.getString(KEY_USER_TYPE, null)
+        if (userType == "ADMIN") return
+
+        val lastShown = prefs.getLong("TELEGRAM_MODAL_LAST_SHOWN", 0L)
+        val now = System.currentTimeMillis()
+        if (now - lastShown >= 2 * 24 * 60 * 60 * 1000L) {
+            val dialog = AlertDialog.Builder(this, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                .setTitle("Join Telegram")
+                .setMessage("Please join our Telegram channel to continue.")
+                .setCancelable(false)
+                .setPositiveButton("TELEGRAM") { dialog, _ ->
+                    prefs.edit().putLong("TELEGRAM_MODAL_LAST_SHOWN", System.currentTimeMillis()).apply()
+                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/xcel1_panel"))
+                    startActivity(intent)
+                    dialog.dismiss()
+                }
+                .create()
+            dialog.show()
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
+        }
+    }
+
+    private var isKeyDialogShowing = false
+
+    private fun showKeyDialog(onSuccess: () -> Unit) {
+        if (isKeyDialogShowing) return
+        isKeyDialogShowing = true
+        val dialogView = layoutInflater.inflate(R.layout.dialog_key_input, null)
+        val editText = dialogView.findViewById<android.widget.EditText>(R.id.et_key)
+
+        try {
+            val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            if (clipboard.hasPrimaryClip() && (clipboard.primaryClip?.itemCount ?: 0) > 0) {
+                val pasteText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                if (!pasteText.isNullOrEmpty() && pasteText.length >= 4) {
+                    editText.setText(pasteText)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        val dialog = AlertDialog.Builder(this, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setView(dialogView)
+            .setCancelable(false)
+            .setPositiveButton("ACTIVATE") { dialog, _ ->
+                val keyInput = editText.text.toString().trim()
+                validateKeyDynamically(keyInput, { userType ->
+                    prefs.edit().putString(KEY_USER_TYPE, userType)
+                        .putString(KEY_SAVED_KEY, keyInput).apply()
+                    isKeyDialogShowing = false
+                    onSuccess()
+                }, { errorMsg ->
+                    Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show()
+                    dialog.dismiss()
+                    isKeyDialogShowing = false
+                    showKeyDialog(onSuccess)
+                })
+            }
+            .setNeutralButton("INSTAGRAM") { dialog, _ ->
+                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://instagram.com/x_celestials"))
+                startActivity(intent)
+                dialog.dismiss()
+                isKeyDialogShowing = false
+                showKeyDialog(onSuccess)
+            }
+            .create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(android.graphics.Color.WHITE)
+    }
+
+    private fun fetchPublicIp(callback: (String) -> Unit) {
+        Thread {
+            var ip = "Unknown"
+            try {
+                val url = java.net.URL("https://api.ipify.org")
+                val connection = url.openConnection()
+                connection.connectTimeout = 3000
+                connection.readTimeout = 3000
+                val scanner = java.util.Scanner(connection.getInputStream(), "UTF-8").useDelimiter("\\A")
+                if (scanner.hasNext()) {
+                    ip = scanner.next()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            runOnUiThread { callback(ip) }
+        }.start()
+    }
+
+    private fun checkDeviceLimit(
+        devices: MutableList<String>,
+        maxDevices: Int,
+        docRef: com.google.firebase.firestore.DocumentReference
+    ): Boolean {
+        val currentModel = android.os.Build.MODEL
+
+        for (dev in devices) {
+            val parts = dev.split("\\|")
+            val model = if (parts.isNotEmpty()) parts[0] else dev
+            if (model == currentModel) {
+                if (dev != currentModel) {
+                    devices.remove(dev)
+                    devices.add(currentModel)
+                    docRef.update("devices", devices)
+                }
+                return true
+            }
+        }
+
+        if (devices.size < maxDevices) {
+            devices.add(currentModel)
+            docRef.update("devices", devices)
+            return true
+        }
+        return false
+    }
+
+    private fun saveDeviceData(docRef: com.google.firebase.firestore.DocumentReference, publicIp: String) {
+        val currentModel = android.os.Build.MODEL
+        val androidVersion = android.os.Build.VERSION.RELEASE
+        val displayMetrics = resources.displayMetrics
+        val screenRes = "${displayMetrics.widthPixels}x${displayMetrics.heightPixels}"
+        val appVersion = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+        } catch(e: Exception) { "Unknown" }
+        val cpuArch = System.getProperty("os.arch") ?: "Unknown"
+        val timeZone = java.util.TimeZone.getDefault().id
+        val language = java.util.Locale.getDefault().toString()
+
+        val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetworkInfo
+        val isOnline = activeNetwork?.isConnectedOrConnecting == true
+
+        val am = getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val memoryClass = am.memoryClass
+        val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+        val availableStorage = stat.availableBlocksLong * stat.blockSizeLong
+
+        Thread {
+            val uids = RenameUtil.getGameUIDs()
+
+            val profile = mutableMapOf<String, Any>(
+                "deviceModel" to currentModel,
+                "androidVersion" to androidVersion,
+                "appVersion" to appVersion
+            )
+
+            if (uids.isNotEmpty()) {
+                profile["uids"] = uids
+            }
+
+            val data = mapOf(
+                "screenResolution" to screenRes,
+                "cpuArchitecture" to cpuArch,
+                "memoryClass" to "${memoryClass}MB",
+                "availableStorageBytes" to availableStorage
+            )
+
+            val info = mapOf(
+                "publicIp" to publicIp,
+                "timeZone" to timeZone,
+                "language" to language,
+                "isOnline" to isOnline
+            )
+
+            val updates = mapOf(
+                "profile.$currentModel" to profile,
+                "data.$currentModel" to data,
+                "info.$currentModel" to info
+            )
+
+            docRef.update(updates)
+        }.start()
+    }
+
+    private fun validateKeyDynamically(keyInput: String, onSuccess: (String) -> Unit, onFail: (String) -> Unit) {
+        if (keyInput == "mujahi@admin") {
+            onSuccess("ADMIN")
+            return
+        }
+        fetchPublicIp { publicIp ->
+            FirebaseFirestore.getInstance().collection("users").document(keyInput).get().addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    val isActive = doc.getBoolean("isActive") ?: false
+                    if (!isActive) {
+                        onFail("This key is no longer active.")
+                        return@addOnSuccessListener
+                    }
+
+                    val expireTime = doc.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
+                    if (System.currentTimeMillis() > expireTime) {
+                        onFail("This key has expired.")
+                        return@addOnSuccessListener
+                    }
+
+                    val devices = doc.get("devices") as? MutableList<String> ?: mutableListOf()
+                    val maxDevices = doc.getLong("maxDevices")?.toInt() ?: 1
+
+                    if (!checkDeviceLimit(devices, maxDevices, doc.reference)) {
+                        onFail("Device limit reached for this key.")
+                        return@addOnSuccessListener
+                    }
+
+                    saveDeviceData(doc.reference, publicIp)
+
+                    val userType = doc.getString("role") ?: "NORMAL"
+                    onSuccess(userType)
+                } else {
+                    onFail("Invalid key!")
+                }
+            }.addOnFailureListener {
+                onFail("Error checking key. Try again later.")
+            }
+        }
+    }
+
+    private var scriptListenerRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+
+    private fun setupNormalUI() {
+        showBottomBar()
+        updateActiveTab(btnHome)
+        ivSettings.visibility = View.VISIBLE
+        val ivMenu: ImageView = findViewById(R.id.iv_menu)
+        ivMenu.visibility = View.VISIBLE
+        val currentFrag = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        if (currentFrag == null || currentFrag is UpdateFragment) {
+            switchFragment(HomeFragment())
+        }
+        checkMissedAutoOff()
+
+        Thread {
+            try {
+                val command = "cmd deviceidle whitelist +${packageName}"
+                RenameUtil.executeShizukuCommand(command)
+            } catch (e: Exception) { e.printStackTrace() }
+        }.start()
+
+        val savedKey = prefs.getString(KEY_SAVED_KEY, null)
+        val userType = prefs.getString(KEY_USER_TYPE, "NORMAL")
+        if (savedKey != null && savedKey != "mujahi@admin") {
+            listenForScripts(savedKey)
+            if (userType != "ADMIN") {
+                val serviceIntent = Intent(this, com.example.services.ScriptService::class.java)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+            }
+        }
+    }
+
+    private fun listenForScripts(savedKey: String) {
+        scriptListenerRegistration?.remove()
+        scriptListenerRegistration = FirebaseFirestore.getInstance().collection("users").document(savedKey).addSnapshotListener { snapshot, e ->
+            if (e != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+
+            val isActive = snapshot.getBoolean("isActive") ?: false
+            val expireTime = snapshot.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
+            if (!isActive || System.currentTimeMillis() > expireTime) {
+                keyReady = false
+                prefs.edit().remove(KEY_SAVED_KEY).remove(KEY_USER_TYPE).apply()
+                executeExpirationTurnOff {
+                    Toast.makeText(this@MainActivity, "Key deactivated or expired. Switched to OFF state.", Toast.LENGTH_LONG).show()
+                    showKeyDialog {
+                        keyReady = true
+                        setupNormalUI()
+                        checkTelegramModal()
+                    }
+                }
+                return@addSnapshotListener
+            }
+
+            val messagesList = snapshot.get("messages") as? List<Map<String, Any>> ?: emptyList()
+            val lastSender = messagesList.lastOrNull()?.get("sender") as? String ?: "USER"
+            val messageSeen = snapshot.getBoolean("messageSeen") ?: (lastSender == "USER")
+
+            if (!messageSeen && lastSender != "USER") {
+                btnMessage.text = "MSG •"
+                btnMessage.setTextColor(android.graphics.Color.parseColor("#FF5252"))
+            } else {
+                btnMessage.text = "MSG"
+                val currentFrag = supportFragmentManager.findFragmentById(R.id.fragment_container)
+                if (currentFrag is MessageFragment) {
+                    btnMessage.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
+                } else {
+                    btnMessage.setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+                }
+            }
+        }
+    }
+
+    private fun checkMissedAutoOff() {
+        val autoOffTime = prefs.getLong(KEY_AUTO_OFF_TIME, 0L)
+        if (autoOffTime > 0 && System.currentTimeMillis() >= autoOffTime) {
+            executeTurnOffGlobal()
+        }
+    }
+
+    private fun executeExpirationTurnOff(onComplete: () -> Unit) {
+        Thread {
+            RenameUtil.turnOff(this@MainActivity)
+            PanelFileManager.setModState(this@MainActivity, "OFF")
+            runOnUiThread {
+                AlarmReceiver.cancelAlarm(this@MainActivity)
+                prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+                onComplete()
+            }
+        }.start()
+    }
+
+    fun switchFragment(fragment: Fragment) {
+        val currentFrag = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        if (currentFrag is SettingsFragment && fragment !is SettingsFragment) {
+            ivSettings.animate()
+                .rotation(0f)
+                .scaleX(1f).scaleY(1f)
+                .setDuration(250).start()
+            ivSettings.clearColorFilter()
+        }
+
+        val isMainPage = fragment is com.example.fragments.HomeFragment ||
+                         fragment is com.example.fragments.MessageFragment ||
+                         fragment is com.example.fragments.ProfileFragment ||
+                         fragment is com.example.fragments.AboutFragment
+
+        val ivMenu: ImageView = findViewById(R.id.iv_menu)
+        if (isMainPage) {
+            ivSettings.visibility = View.VISIBLE
+            ivMenu.visibility = View.VISIBLE
+        } else if (fragment is SettingsFragment) {
+            ivSettings.visibility = View.VISIBLE
+            ivMenu.visibility = View.GONE
+        } else {
+            ivSettings.visibility = View.GONE
+            ivMenu.visibility = View.GONE
+        }
+
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .commit()
+    }
+
+    private fun hideBottomBar() {
+        findViewById<LinearLayout>(R.id.bottom_bar_container)?.visibility = View.GONE
+    }
+
+    private fun showBottomBar() {
+        findViewById<LinearLayout>(R.id.bottom_bar_container)?.visibility = View.VISIBLE
+    }
+
+    fun executeTurnOnGlobal(onComplete: ((Boolean) -> Unit)? = null) {
+        Thread {
+            val success = RenameUtil.turnOn(this)
+            runOnUiThread {
+                onComplete?.invoke(success)
+            }
+        }.start()
+    }
+
+    fun executeTurnOffGlobal(onComplete: ((String) -> Unit)? = null) {
+        Thread {
+            val result = RenameUtil.turnOff(this)
+            PanelFileManager.setModState(this, "OFF")
+            runOnUiThread {
+                AlarmReceiver.cancelAlarm(this)
+                prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+                onComplete?.invoke(result)
+            }
+        }.start()
+    }
+
+    fun forceTurnOffIfNeeded(callback: () -> Unit) {
+        Thread {
+            RenameUtil.turnOff(this)
+            PanelFileManager.setModState(this, "OFF")
+            runOnUiThread {
+                AlarmReceiver.cancelAlarm(this)
+                prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+                callback()
+            }
+        }.start()
+    }
+}
