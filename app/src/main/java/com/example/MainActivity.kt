@@ -236,9 +236,9 @@ class MainActivity : AppCompatActivity() {
                 val forceUpdate = doc.getBoolean("force_update") ?: false
                 prefs.edit().putBoolean("force_update", forceUpdate).apply()
             }
-            runOnUiThread { performExpirationCheckAndProceed() }
+            runOnUiThread { if (!isFinishing && !isDestroyed) performExpirationCheckAndProceed() }
         }.addOnFailureListener {
-            runOnUiThread { performExpirationCheckAndProceed() }
+            runOnUiThread { if (!isFinishing && !isDestroyed) performExpirationCheckAndProceed() }
         }
     }
 
@@ -562,7 +562,7 @@ class MainActivity : AppCompatActivity() {
     private var isKeyDialogShowing = false
 
     private fun showKeyDialog(onSuccess: () -> Unit) {
-        if (isKeyDialogShowing) return
+        if (isKeyDialogShowing || isFinishing || isDestroyed) return
         isKeyDialogShowing = true
         val dialogView = layoutInflater.inflate(R.layout.dialog_key_input, null)
         val editText = dialogView.findViewById<android.widget.EditText>(R.id.et_key)
@@ -609,18 +609,33 @@ class MainActivity : AppCompatActivity() {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(android.graphics.Color.WHITE)
 
-        // "Get Key" button with YouTube icon on the left
-        val getKeyBtn = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
-        getKeyBtn?.setTextColor(android.graphics.Color.WHITE)
-        val density = resources.displayMetrics.density
-        androidx.core.content.ContextCompat.getDrawable(this, R.drawable.ic_youtube)?.let { icon ->
-            val size = (20 * density).toInt()
-            icon.setBounds(0, 0, size, size)
-            getKeyBtn?.setCompoundDrawables(icon, null, null, null)
-            getKeyBtn?.compoundDrawablePadding = (6 * density).toInt()
-        }
-        getKeyBtn?.setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://youtube.com/@xcel_panel")))
+        // "Get Key" button with YouTube icon on the left (crash-safe)
+        try {
+            val getKeyBtn = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            getKeyBtn?.setTextColor(android.graphics.Color.WHITE)
+
+            try {
+                val density = resources.displayMetrics.density
+                val icon = ContextCompat.getDrawable(this, R.drawable.ic_youtube)
+                if (icon != null) {
+                    val size = (20 * density).toInt()
+                    icon.setBounds(0, 0, size, size)
+                    getKeyBtn?.setCompoundDrawables(icon, null, null, null)
+                    getKeyBtn?.compoundDrawablePadding = (6 * density).toInt()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace() // icon failed -> button still works without icon
+            }
+
+            getKeyBtn?.setOnClickListener {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://youtube.com/@xcel_panel")))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Unable to open link", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
