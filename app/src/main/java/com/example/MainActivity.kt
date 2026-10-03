@@ -603,10 +603,25 @@ class MainActivity : AppCompatActivity() {
                 isKeyDialogShowing = false
                 showKeyDialog(onSuccess)
             }
+            .setNegativeButton("Get Key", null) // click handled below so dialog stays open
             .create()
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(android.graphics.Color.WHITE)
+
+        // "Get Key" button with YouTube icon on the left
+        val getKeyBtn = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+        getKeyBtn?.setTextColor(android.graphics.Color.WHITE)
+        val density = resources.displayMetrics.density
+        androidx.core.content.ContextCompat.getDrawable(this, R.drawable.ic_youtube)?.let { icon ->
+            val size = (20 * density).toInt()
+            icon.setBounds(0, 0, size, size)
+            getKeyBtn?.setCompoundDrawables(icon, null, null, null)
+            getKeyBtn?.compoundDrawablePadding = (6 * density).toInt()
+        }
+        getKeyBtn?.setOnClickListener {
+            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://youtube.com/@xcel_panel")))
+        }
     }
 
     private fun fetchPublicIp(callback: (String) -> Unit) {
