@@ -566,6 +566,11 @@ class MainActivity : AppCompatActivity() {
         isKeyDialogShowing = true
         val dialogView = layoutInflater.inflate(R.layout.dialog_key_input, null)
         val editText = dialogView.findViewById<android.widget.EditText>(R.id.et_key)
+        val btnGetKey = dialogView.findViewById<android.widget.Button>(R.id.btn_get_key)
+        btnGetKey?.setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://x-link.vercel.app/getkey"))
+            startActivity(intent)
+        }
 
         try {
             val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager

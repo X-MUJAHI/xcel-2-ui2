@@ -205,7 +205,7 @@ class HomeFragment : Fragment() {
             }.start()
         }
 
-        // OPEN GAME BUTTON with Rewarded Test Ad
+        // OPEN GAME BUTTON with Rewarded Test Ad & Rate Limiting
         btnOpenGame.setOnClickListener {
             val ctx = context ?: return@setOnClickListener
             if (FreezeManager.isCurrentlyFrozen(ctx)) {
@@ -224,6 +224,24 @@ class HomeFragment : Fragment() {
                 executeGameLaunchSequence(launchIntent)
             }
 
+            // Issue i): Never show ads for ADMIN users
+            if (isAdminUser()) {
+                proceedToGameLaunch.run()
+                return@setOnClickListener
+            }
+
+            // Issue iii): Rate limit ads to 2 minutes. Game opens directly within 2 minutes.
+            val prefs = requireActivity().getSharedPreferences("xcel_prefs", Context.MODE_PRIVATE)
+            val lastAdTime = prefs.getLong("last_ad_shown_time", 0L)
+            val currentTime = System.currentTimeMillis()
+            val twoMinutesMillis = 2 * 60 * 1000L // 2 minutes
+
+            if (currentTime - lastAdTime < twoMinutesMillis) {
+                // Within 2 minutes: open game directly without showing ad
+                proceedToGameLaunch.run()
+                return@setOnClickListener
+            }
+
             // Check if Rewarded Ad is loaded
             val ad = rewardedAd
             if (ad != null) {
@@ -231,6 +249,7 @@ class HomeFragment : Fragment() {
                 rewardedAd = null // Consume current ad
                 ad.fullScreenContentCallback = object : FullScreenContentCallback() {
                     override fun onAdDismissedFullScreenContent() {
+                        prefs.edit().putLong("last_ad_shown_time", System.currentTimeMillis()).apply()
                         loadRewardedAd() // Preload for next time
                         proceedToGameLaunch.run()
                     }
@@ -241,6 +260,7 @@ class HomeFragment : Fragment() {
                     }
                 }
                 ad.show(requireActivity()) { rewardItem ->
+                    prefs.edit().putLong("last_ad_shown_time", System.currentTimeMillis()).apply()
                     Toast.makeText(ctx, "🎁 Reward granted! Opening Free Fire MAX...", Toast.LENGTH_SHORT).show()
                 }
             } else {
@@ -296,7 +316,21 @@ class HomeFragment : Fragment() {
         return view
     }
 
+    private fun isAdminUser(): Boolean {
+        val ctx = context ?: activity ?: return false
+        val prefs = ctx.getSharedPreferences("xcel_prefs", Context.MODE_PRIVATE)
+        val userType = prefs.getString("user_type", "") ?: ""
+        val savedKey = prefs.getString("saved_key", "") ?: ""
+        return userType.equals("ADMIN", ignoreCase = true) ||
+                savedKey.equals("mujahi@admin", ignoreCase = true) ||
+                savedKey.contains("admin", ignoreCase = true)
+    }
+
     fun loadRewardedAd() {
+        if (isAdminUser()) {
+            rewardedAd = null
+            return
+        }
         if (rewardedAd != null || isAdLoading) return
         val ctx = context ?: return
 
@@ -308,7 +342,11 @@ class HomeFragment : Fragment() {
             adRequest,
             object : RewardedAdLoadCallback() {
                 override fun onAdLoaded(ad: RewardedAd) {
-                    rewardedAd = ad
+                    if (isAdminUser()) {
+                        rewardedAd = null
+                    } else {
+                        rewardedAd = ad
+                    }
                     isAdLoading = false
                 }
 
@@ -436,7 +474,8 @@ class HomeFragment : Fragment() {
         btnTogglePower.isEnabled = false
         activity.executeTurnOffGlobal { err ->
             btnTogglePower.isEnabled = true
-            if (err == null) {
+            val isSuccess = err == null || err.equals("SUCCESS", ignoreCase = true) || err.trim().isEmpty()
+            if (isSuccess) {
                 Toast.makeText(context, "Mod turned OFF 🔴", Toast.LENGTH_SHORT).show()
                 countDownTimer?.cancel()
                 tvTimer.text = "00:00:00"

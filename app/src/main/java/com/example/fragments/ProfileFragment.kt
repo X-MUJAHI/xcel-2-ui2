@@ -88,6 +88,10 @@ class ProfileFragment : Fragment() {
     private fun showChangeKeyDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_key_input, null)
         val editText = dialogView.findViewById<EditText>(R.id.et_key)
+        val btnGetKey = dialogView.findViewById<Button>(R.id.btn_get_key)
+        btnGetKey?.setOnClickListener {
+            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://x-link.vercel.app/getkey")))
+        }
 
         try {
             val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
