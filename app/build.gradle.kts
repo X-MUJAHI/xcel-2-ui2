@@ -58,8 +58,6 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.haze)
-    implementation(libs.haze.materials)
     debugImplementation(libs.androidx.ui.tooling)
 
     // OkHttp & Firebase
