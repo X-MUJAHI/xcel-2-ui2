@@ -70,9 +70,64 @@ object RenameUtil {
             )
             method.isAccessible = true
             val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as ShizukuRemoteProcess
-            process.waitFor() == 0
+            val errReader = BufferedReader(InputStreamReader(process.errorStream))
+            val err = errReader.readText().trim()
+            val code = process.waitFor()
+            if (code != 0) {
+                lastError = err.ifEmpty { "Command failed (exit code $code)" }
+                false
+            } else {
+                lastError = ""
+                true
+            }
         } catch (e: Exception) {
             lastError = e.message ?: "Shizuku exec failed"
+            false
+        }
+    }
+
+    fun copyFileWithShizuku(src: File, destPath: String): Boolean {
+        if (!src.exists() || !src.isFile) {
+            lastError = "Source file ${src.absolutePath} not found"
+            return false
+        }
+        val destFile = File(destPath)
+        val destDir = destFile.parent ?: "/storage/emulated/0"
+
+        // 1. Ensure target directory exists via Shizuku shell
+        executeShizukuCommand("mkdir -p '$destDir'")
+
+        // 2. Stream file content from app to Shizuku stdin using `cat > destPath`
+        return try {
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, arrayOf("sh", "-c", "cat > '$destPath'"), null, null) as ShizukuRemoteProcess
+
+            FileInputStream(src).use { input ->
+                process.outputStream.use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                }
+            }
+
+            val errReader = BufferedReader(InputStreamReader(process.errorStream))
+            val errOutput = errReader.readText().trim()
+            val code = process.waitFor()
+            if (code == 0) {
+                executeShizukuCommand("chmod 666 '$destPath'")
+                lastError = ""
+                true
+            } else {
+                lastError = errOutput.ifEmpty { "Exit code $code writing to $destPath" }
+                false
+            }
+        } catch (e: Exception) {
+            lastError = e.message ?: "Streaming to Shizuku failed"
             false
         }
     }

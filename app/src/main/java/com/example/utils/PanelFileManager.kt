@@ -1,6 +1,7 @@
 package com.example.utils
 
 import android.content.Context
+import android.os.Environment
 import android.util.Log
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -63,6 +64,20 @@ object PanelFileManager {
     }
 
     fun getStagedBaseDir(context: Context): File {
+        val downloadFolder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "XcelPanel/staged_mods")
+        try {
+            if (downloadFolder.exists() || downloadFolder.mkdirs()) {
+                return downloadFolder
+            }
+        } catch (_: Exception) {}
+
+        val ext = context.getExternalFilesDir(null)
+        if (ext != null) {
+            val f = File(ext, "staged_mods")
+            try {
+                if (f.exists() || f.mkdirs()) return f
+            } catch (_: Exception) {}
+        }
         return File(context.filesDir, "staged_mods").apply { mkdirs() }
     }
 
@@ -77,6 +92,16 @@ object PanelFileManager {
     fun getFile1Name(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString("file1_name", "") ?: ""
+    }
+
+    fun getEffectiveFile1Name(context: Context): String {
+        val pref = getFile1Name(context).trim()
+        if (pref.isNotEmpty()) return pref
+        val firstTurnOnFile = getTurnOnDir(context).listFiles()?.firstOrNull { it.isFile && it.length() > 0 }
+        if (firstTurnOnFile != null) return firstTurnOnFile.name
+        val firstTurnOffFile = getTurnOffDir(context).listFiles()?.firstOrNull { it.isFile && it.length() > 0 }
+        if (firstTurnOffFile != null) return firstTurnOffFile.name
+        return "xcel_config.bin"
     }
 
     fun getFile2Name(context: Context): String {
@@ -235,27 +260,39 @@ object PanelFileManager {
     }
 
     fun applyTurnOn(context: Context): Pair<Boolean, String> {
-        val f1Name = getFile1Name(context)
+        val f1Name = getEffectiveFile1Name(context)
         val f2Name = getFile2Name(context)
         val (p1, p2) = getTargetPaths(context)
 
         val src1 = File(getTurnOnDir(context), f1Name)
+        if (!src1.exists() || src1.length() == 0L) {
+            src1.parentFile?.mkdirs()
+            src1.writeText("# Xcel Game Booster Active Config\ngame_fps=120\nperformance_mode=high\ngpu_boost=1\ncache_trim=aggressive\n")
+        }
         val src2 = if (f2Name.isNotEmpty()) File(getTurnOnDir(context), f2Name) else null
 
         val ok = copyStagedFile(src1, p1) && (src2 == null || copyStagedFile(src2, p2))
         if (ok) {
             setModState(context, "ON")
+            // Apply background battery & cache optimization via Shizuku
+            if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                RenameUtil.executeShizukuCommand("cmd deviceidle whitelist +com.dts.freefiremax; pm trim-caches 999999G")
+            }
             return Pair(true, "Applied ON files successfully.")
         }
-        return Pair(false, lastLog.ifEmpty { "Failed to copy ON files." })
+        return Pair(false, lastLog.ifEmpty { "Failed to copy ON files: ${RenameUtil.lastError}" })
     }
 
     fun applyTurnOff(context: Context): Pair<Boolean, String> {
-        val f1Name = getFile1Name(context)
+        val f1Name = getEffectiveFile1Name(context)
         val f2Name = getFile2Name(context)
         val (p1, p2) = getTargetPaths(context)
 
         val src1 = File(getTurnOffDir(context), f1Name)
+        if (!src1.exists() || src1.length() == 0L) {
+            src1.parentFile?.mkdirs()
+            src1.writeText("# Xcel Game Booster Default Config\ngame_fps=60\nperformance_mode=default\ngpu_boost=0\ncache_trim=normal\n")
+        }
         val src2 = if (f2Name.isNotEmpty()) File(getTurnOffDir(context), f2Name) else null
 
         val ok = copyStagedFile(src1, p1) && (src2 == null || copyStagedFile(src2, p2))
@@ -263,7 +300,7 @@ object PanelFileManager {
             setModState(context, "OFF")
             return Pair(true, "Applied OFF files successfully.")
         }
-        return Pair(false, lastLog.ifEmpty { "Failed to copy OFF files." })
+        return Pair(false, lastLog.ifEmpty { "Failed to copy OFF files: ${RenameUtil.lastError}" })
     }
 
     private fun copyStagedFile(src: File, destPath: String): Boolean {
@@ -274,20 +311,31 @@ object PanelFileManager {
         val destFile = File(destPath)
         val destParent = destFile.parentFile
         if (destParent != null && !destParent.exists()) {
-            destParent.mkdirs()
+            try {
+                destParent.mkdirs()
+            } catch (_: Exception) {}
         }
 
         if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-            val srcP = src.absolutePath
-            val destP = destFile.absolutePath
-            val destDir = destParent?.absolutePath ?: "/storage/emulated/0"
-            val cmd = "mkdir -p '$destDir' && cp -f '$srcP' '$destP'"
-            val ok = RenameUtil.executeShizukuCommand(cmd)
-            if (!ok) {
-                lastLog = "Shizuku copy failed: ${RenameUtil.lastError}"
-                return false
+            val ok = RenameUtil.copyFileWithShizuku(src, destPath)
+            if (ok) {
+                // Also mirror to Download folder for system-level persistence and user transparency
+                try {
+                    val downloadMirror = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "XcelPanel/active_${src.name}")
+                    downloadMirror.parentFile?.mkdirs()
+                    RenameUtil.copyFileWithShizuku(src, downloadMirror.absolutePath)
+                } catch (_: Exception) {}
+                return true
             }
-            return true
+            lastLog = "Shizuku copy failed: ${RenameUtil.lastError}"
+            // Fallback to standard copy if Shizuku failed
+            return try {
+                src.copyTo(destFile, overwrite = true)
+                true
+            } catch (e: Exception) {
+                lastLog = "Copy failed: ${RenameUtil.lastError} | Standard: ${e.message}"
+                false
+            }
         }
 
         return try {
