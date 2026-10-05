@@ -7,6 +7,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.example.R
+import com.example.ui.theme.MyApplicationTheme
 
 object GlassmorphicDialogHelper {
 
@@ -20,46 +21,53 @@ object GlassmorphicDialogHelper {
     ) {
         val config = PermissionPromptConfigs.get(type)
 
-        val overlay = activity.findViewById<ComposeView?>(R.id.compose_permission_overlay)
-        if (overlay != null) {
-            overlay.visibility = View.VISIBLE
-            overlay.setViewCompositionStrategy(
-                ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
-            )
-            overlay.setContent {
-                GlassmorphicPermissionDialog(
-                    config = config,
-                    onPrimary = {
-                        dismissPermissionOverlay(activity)
-                        onPrimary()
-                    },
-                    onSecondary = {
-                        dismissPermissionOverlay(activity)
-                        onSecondary?.invoke()
-                    }
+        try {
+            val overlay = activity.findViewById<ComposeView?>(R.id.compose_permission_overlay)
+            if (overlay != null) {
+                overlay.visibility = View.VISIBLE
+                overlay.setViewCompositionStrategy(
+                    ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
                 )
-            }
-        } else {
-            // Fallback to standard dialog if overlay container is not in current view hierarchy
-            val builder = AlertDialog.Builder(activity)
-                .setTitle(config.title)
-                .setMessage(config.description)
-                .setCancelable(false)
-                .setPositiveButton(config.primaryButtonText) { dialog: DialogInterface, _: Int ->
-                    dialog.dismiss()
-                    onPrimary()
+                overlay.setContent {
+                    MyApplicationTheme {
+                        GlassmorphicPermissionDialog(
+                            config = config,
+                            onPrimary = {
+                                dismissPermissionOverlay(activity)
+                                onPrimary()
+                            },
+                            onSecondary = {
+                                dismissPermissionOverlay(activity)
+                                onSecondary?.invoke()
+                            }
+                        )
+                    }
                 }
-
-            val secondaryText = config.secondaryButtonText
-            if (!secondaryText.isNullOrEmpty()) {
-                builder.setNegativeButton(secondaryText) { dialog: DialogInterface, _: Int ->
-                    dialog.dismiss()
-                    onSecondary?.invoke()
-                }
+                return
             }
-
-            builder.show()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
+
+        // Fallback to standard dialog if overlay container is not in current view hierarchy or fails
+        val builder = AlertDialog.Builder(activity, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setTitle(config.title)
+            .setMessage(config.description)
+            .setCancelable(false)
+            .setPositiveButton(config.primaryButtonText) { dialog: DialogInterface, _: Int ->
+                dialog.dismiss()
+                onPrimary()
+            }
+
+        val secondaryText = config.secondaryButtonText
+        if (!secondaryText.isNullOrEmpty()) {
+            builder.setNegativeButton(secondaryText) { dialog: DialogInterface, _: Int ->
+                dialog.dismiss()
+                onSecondary?.invoke()
+            }
+        }
+
+        builder.show()
     }
 
     @JvmStatic
@@ -69,3 +77,4 @@ object GlassmorphicDialogHelper {
         }
     }
 }
+

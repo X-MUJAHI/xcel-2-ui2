@@ -1,6 +1,5 @@
 package com.example
 
-import android.app.AlertDialog
 import android.app.AppOpsManager
 import android.content.ClipboardManager
 import android.content.Context
@@ -23,6 +22,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.drawerlayout.widget.DrawerLayout
@@ -245,20 +245,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performExpirationCheckAndProceed() {
-        var expireTime = Long.MAX_VALUE
-        val expireDateStr = prefs.getString("app_expire_date", null)
-        if (!expireDateStr.isNullOrBlank()) {
-            try {
-                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-                    timeZone = TimeZone.getTimeZone("UTC")
-                }
-                val parsed = sdf.parse(expireDateStr)
-                if (parsed != null) {
-                    expireTime = parsed.time
-                }
-            } catch (_: Exception) {}
-        }
-
         var localVersion = "1.0"
         try {
             val vIn = resources.openRawResource(R.raw.version)
@@ -269,8 +255,7 @@ class MainActivity : AppCompatActivity() {
 
         val remoteVersion = prefs.getString("app_version", localVersion) ?: localVersion
         val forceUpdate = prefs.getBoolean("force_update", false)
-        val versionMismatch = remoteVersion.isNotEmpty() && remoteVersion != localVersion
-        val isExpiredNow = forceUpdate || versionMismatch || (System.currentTimeMillis() > expireTime)
+        val isExpiredNow = forceUpdate && remoteVersion.isNotEmpty() && remoteVersion != localVersion
 
         this.isExpired = isExpiredNow
         this.lockToUpdate = isExpiredNow
@@ -288,9 +273,10 @@ class MainActivity : AppCompatActivity() {
             keyReady = false
             requestStoragePermission()
         } else {
-            if (savedKey.equals("mujahi@admin", ignoreCase = true)) {
+            if (savedKey.equals("mujahi@admin", ignoreCase = true) || savedKey == "FREE_USER") {
                 keyReady = true
-                prefs.edit().putString(KEY_USER_TYPE, "ADMIN").apply()
+                val role = if (savedKey.equals("mujahi@admin", ignoreCase = true)) "ADMIN" else "NORMAL"
+                prefs.edit().putString(KEY_USER_TYPE, role).apply()
                 requestStoragePermission()
                 return
             }
@@ -517,6 +503,15 @@ class MainActivity : AppCompatActivity() {
                     showKeyDialog(onSuccess)
                 })
             }
+            .setNegativeButton("USE FREE") { d, _ ->
+                prefs.edit()
+                    .putString(KEY_USER_TYPE, "NORMAL")
+                    .putString(KEY_SAVED_KEY, "FREE_USER")
+                    .apply()
+                isKeyDialogShowing = false
+                d.dismiss()
+                onSuccess()
+            }
             .setNeutralButton("INSTAGRAM") { d, _ ->
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://instagram.com/x_celestials")))
                 d.dismiss()
@@ -527,6 +522,7 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(Color.parseColor("#00E5FF"))
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(Color.parseColor("#94A3B8"))
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(Color.WHITE)
     }
 
