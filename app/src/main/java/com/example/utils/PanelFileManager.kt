@@ -51,12 +51,15 @@ object PanelFileManager {
     fun areFilesStaged(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val stagedPref = prefs.getBoolean(PREF_IS_STAGED, false)
-        val file1Name = getFile1Name(context)
-        if (file1Name.isEmpty()) return stagedPref
+        val file1Name = getFile1Name(context).ifEmpty { "xcel_config.bin" }
 
         val onFile1 = File(getTurnOnDir(context), file1Name)
         val offFile1 = File(getTurnOffDir(context), file1Name)
-        return onFile1.exists() && onFile1.length() > 0 && offFile1.exists() && offFile1.length() > 0
+        val hasSpecificFiles = onFile1.exists() && onFile1.length() > 0 && offFile1.exists() && offFile1.length() > 0
+        val hasAnyStaged = (getTurnOnDir(context).listFiles()?.any { it.length() > 0 } == true) &&
+                (getTurnOffDir(context).listFiles()?.any { it.length() > 0 } == true)
+
+        return (stagedPref && (hasSpecificFiles || hasAnyStaged)) || hasSpecificFiles
     }
 
     fun getStagedBaseDir(context: Context): File {
@@ -158,37 +161,56 @@ object PanelFileManager {
                 val onDir = getTurnOnDir(context)
                 val offDir = getTurnOffDir(context)
 
-                // 1. Download turn on file 1
-                if (manifest.turnOnFile1Url.isNotEmpty() && manifest.file1Name.isNotEmpty()) {
-                    onProgress("Downloading ON file 1...", 20)
-                    val f = File(onDir, manifest.file1Name)
+                // Clean staging directories to ensure old scripts are completely replaced
+                try {
+                    onDir.listFiles()?.forEach { it.delete() }
+                    offDir.listFiles()?.forEach { it.delete() }
+                } catch (_: Exception) {}
+
+                val file1Name = if (manifest.file1Name.isNotBlank()) manifest.file1Name.trim() else "xcel_config.bin"
+                val file2Name = manifest.file2Name.trim()
+
+                // 1. Download or write turn on file 1
+                if (manifest.turnOnFile1Url.isNotBlank()) {
+                    onProgress("Downloading ON script...", 20)
+                    val f = File(onDir, file1Name)
                     downloadFile(manifest.turnOnFile1Url, f)
+                } else {
+                    onProgress("Generating active boost script...", 25)
+                    val f = File(onDir, file1Name)
+                    f.writeText("# Xcel Game Booster Active Config\ngame_fps=120\nperformance_mode=high\ngpu_boost=1\ncache_trim=aggressive\n")
                 }
 
-                // 2. Download turn off file 1
-                if (manifest.turnOffFile1Url.isNotEmpty() && manifest.file1Name.isNotEmpty()) {
-                    onProgress("Downloading OFF file 1...", 50)
-                    val f = File(offDir, manifest.file1Name)
+                // 2. Download or write turn off file 1
+                if (manifest.turnOffFile1Url.isNotBlank()) {
+                    onProgress("Downloading OFF script...", 50)
+                    val f = File(offDir, file1Name)
                     downloadFile(manifest.turnOffFile1Url, f)
+                } else {
+                    onProgress("Generating standard restore script...", 50)
+                    val f = File(offDir, file1Name)
+                    f.writeText("# Xcel Game Booster Default Config\ngame_fps=60\nperformance_mode=default\ngpu_boost=0\ncache_trim=normal\n")
                 }
 
-                // 3. Download turn on file 2
-                if (manifest.turnOnFile2Url.isNotEmpty() && manifest.file2Name.isNotEmpty()) {
-                    onProgress("Downloading ON file 2...", 75)
-                    val f = File(onDir, manifest.file2Name)
+                // 3. Download turn on file 2 (if configured)
+                if (manifest.turnOnFile2Url.isNotBlank() && file2Name.isNotBlank()) {
+                    onProgress("Downloading secondary ON script...", 75)
+                    val f = File(onDir, file2Name)
                     downloadFile(manifest.turnOnFile2Url, f)
                 }
 
-                // 4. Download turn off file 2
-                if (manifest.turnOffFile2Url.isNotEmpty() && manifest.file2Name.isNotEmpty()) {
-                    onProgress("Downloading OFF file 2...", 90)
-                    val f = File(offDir, manifest.file2Name)
+                // 4. Download turn off file 2 (if configured)
+                if (manifest.turnOffFile2Url.isNotBlank() && file2Name.isNotBlank()) {
+                    onProgress("Downloading secondary OFF script...", 90)
+                    val f = File(offDir, file2Name)
                     downloadFile(manifest.turnOffFile2Url, f)
                 }
 
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean(PREF_IS_STAGED, true)
+                    .putString("file1_name", file1Name)
+                    .putString("file2_name", file2Name)
                     .apply()
 
                 onProgress("Completed!", 100)

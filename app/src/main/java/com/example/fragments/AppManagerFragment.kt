@@ -67,9 +67,10 @@ class AppManagerFragment : Fragment() {
     }
 
     private fun loadApps() {
+        val appContext = context?.applicationContext ?: return
         Thread {
             appList.clear()
-            val pm = requireContext().packageManager
+            val pm = appContext.packageManager
             val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
             for (app in installed) {
                 val label = pm.getApplicationLabel(app).toString()
@@ -79,7 +80,9 @@ class AppManagerFragment : Fragment() {
             }
             appList.sortBy { it.label.lowercase() }
             activity?.runOnUiThread {
-                adapter.notifyDataSetChanged()
+                if (isAdded) {
+                    adapter.notifyDataSetChanged()
+                }
             }
         }.start()
     }

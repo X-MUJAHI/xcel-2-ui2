@@ -51,9 +51,10 @@ class ProcessManagerFragment : Fragment() {
     }
 
     private fun loadProcesses() {
+        val appContext = context?.applicationContext ?: return
         Thread {
             processList.clear()
-            val pm = requireContext().packageManager
+            val pm = appContext.packageManager
             if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
                 val out = RenameUtil.executeShizukuCommandWithOutput("ps -A -o PID,USER,NAME")
                 val lines = out.lines().drop(1)
@@ -75,7 +76,9 @@ class ProcessManagerFragment : Fragment() {
                 }
             }
             activity?.runOnUiThread {
-                adapter.notifyDataSetChanged()
+                if (isAdded) {
+                    adapter.notifyDataSetChanged()
+                }
             }
         }.start()
     }
