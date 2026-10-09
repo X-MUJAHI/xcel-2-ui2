@@ -9,7 +9,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 object PanelFileManager {
@@ -22,6 +21,10 @@ object PanelFileManager {
     const val KEY_TARGET_PATH_1 = "cached_target_path_1"
     const val KEY_TARGET_PATH_2 = "cached_target_path_2"
     const val KEY_FILES_ACTIVATED = "panel_files_activated"
+
+    const val KEY_ACTIVE_SCRIPT_ID = "active_script_id"
+    const val KEY_ACTIVE_SCRIPT_NAME = "active_script_name"
+    const val KEY_CACHED_SCRIPTS_COUNT = "cached_scripts_count"
 
     const val VERCEL_TARGET_1_URL = "https://xcel2.vercel.app/targetpath1.txt"
     const val VERCEL_TARGET_2_URL = "https://xcel2.vercel.app/targetpath2.txt"
@@ -37,6 +40,26 @@ object PanelFileManager {
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
     }
+
+    data class ScriptItem(
+        val id: Int,
+        val name: String,
+        val turnOnFile1Url: String,
+        val turnOnFile2Url: String,
+        val file1Name: String,
+        val file2Name: String,
+        val rawImageResName: String = "script$id"
+    )
+
+    data class ScriptsConfig(
+        val scripts: List<ScriptItem>,
+        val turnOffFile1Url: String,
+        val turnOffFile2Url: String,
+        val file1Name: String,
+        val file2Name: String,
+        val targetPath1Override: String? = null,
+        val targetPath2Override: String? = null
+    )
 
     data class FileManifest(
         val turnOnFile1Url: String,
@@ -60,6 +83,18 @@ object PanelFileManager {
         return dir
     }
 
+    fun getScriptsBaseDir(context: Context): File {
+        val dir = File(getStagedBaseDir(context), "scripts")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    fun getScriptStagedDir(context: Context, scriptId: Int): File {
+        val dir = File(getScriptsBaseDir(context), "script_$scriptId")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
     fun getTurnOnDir(context: Context): File {
         val dir = File(getStagedBaseDir(context), "turn_on")
         if (!dir.exists()) dir.mkdirs()
@@ -70,6 +105,26 @@ object PanelFileManager {
         val dir = File(getStagedBaseDir(context), "turn_off")
         if (!dir.exists()) dir.mkdirs()
         return dir
+    }
+
+    fun getActiveScriptId(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_ACTIVE_SCRIPT_ID, 1)
+    }
+
+    fun setActiveScript(context: Context, scriptId: Int, scriptName: String? = null) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit().putInt(KEY_ACTIVE_SCRIPT_ID, scriptId)
+        if (!scriptName.isNullOrBlank()) {
+            editor.putString(KEY_ACTIVE_SCRIPT_NAME, scriptName)
+        }
+        editor.apply()
+    }
+
+    fun getActiveScriptName(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val id = getActiveScriptId(context)
+        return prefs.getString(KEY_ACTIVE_SCRIPT_NAME, "Script $id") ?: "Script $id"
     }
 
     fun getFile1Name(context: Context): String {
@@ -121,6 +176,56 @@ object PanelFileManager {
                 f4.exists() && f4.length() > 0
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return filesExist && prefs.getBoolean(KEY_FILES_ACTIVATED, false)
+    }
+
+    fun isScriptStaged(context: Context, script: ScriptItem): Boolean {
+        val scriptDir = getScriptStagedDir(context, script.id)
+        val f1 = File(scriptDir, script.file1Name)
+        val f2 = File(scriptDir, script.file2Name)
+        if (f1.exists() && f1.length() > 0 && f2.exists() && f2.length() > 0) {
+            return true
+        }
+        // Fallback: if this is current active script, check turn_on dir
+        if (script.id == getActiveScriptId(context)) {
+            val on1 = getStagedTurnOnFile1(context)
+            val on2 = getStagedTurnOnFile2(context)
+            return on1.exists() && on1.length() > 0 && on2.exists() && on2.length() > 0
+        }
+        return false
+    }
+
+    /**
+     * Activates a pre-downloaded script by copying its files into the active turn_on directory.
+     */
+    fun activateScriptFromStaged(context: Context, script: ScriptItem): Boolean {
+        val scriptDir = getScriptStagedDir(context, script.id)
+        val f1 = File(scriptDir, script.file1Name)
+        val f2 = File(scriptDir, script.file2Name)
+
+        if (!f1.exists() || !f2.exists()) {
+            return false
+        }
+
+        val destOn1 = File(getTurnOnDir(context), script.file1Name)
+        val destOn2 = File(getTurnOnDir(context), script.file2Name)
+
+        try {
+            f1.copyTo(destOn1, overwrite = true)
+            f2.copyTo(destOn2, overwrite = true)
+
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(KEY_FILE1_NAME, script.file1Name)
+                .putString(KEY_FILE2_NAME, script.file2Name)
+                .putInt(KEY_ACTIVE_SCRIPT_ID, script.id)
+                .putString(KEY_ACTIVE_SCRIPT_NAME, script.name)
+                .putBoolean(KEY_FILES_ACTIVATED, true)
+                .apply()
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error activating script from staged: ${e.message}")
+            return false
+        }
     }
 
     fun isModOn(context: Context): Boolean {
@@ -201,135 +306,298 @@ object PanelFileManager {
     }
 
     /**
-     * Fetch file configuration from Firestore.
-     * Searches app_settings/global, app_settings/files, and config/files.
+     * Extracts filename from a URL or returns fallback name.
      */
-    fun fetchManifestFromFirestore(
-        context: Context,
-        onSuccess: (FileManifest) -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val firestore = FirebaseFirestore.getInstance()
-
-        fun parseDocument(doc: DocumentSnapshot): FileManifest? {
-            if (!doc.exists()) return null
-
-            // Helper to get string from various naming conventions
-            fun getAny(vararg keys: String): String? {
-                for (k in keys) {
-                    val v = doc.getString(k)
-                    if (!v.isNullOrBlank()) return v.trim()
-                }
-                return null
-            }
-
-            // Also check map structures (e.g. turn_on.file1)
-            val turnOnMap = doc.get("turn_on") as? Map<*, *>
-            val turnOffMap = doc.get("turn_off") as? Map<*, *>
-
-            val on1 = getAny("turn_on_file1_url", "turn_on_file1", "turn_on_file_1", "turnOn1", "file1_on", "on_file1")
-                ?: (turnOnMap?.get("file1") as? String)
-                ?: (turnOnMap?.get("file1_url") as? String)
-
-            val on2 = getAny("turn_on_file2_url", "turn_on_file2", "turn_on_file_2", "turnOn2", "file2_on", "on_file2")
-                ?: (turnOnMap?.get("file2") as? String)
-                ?: (turnOnMap?.get("file2_url") as? String)
-
-            val off1 = getAny("turn_off_file1_url", "turn_off_file1", "turn_off_file_1", "turnOff1", "file1_off", "off_file1")
-                ?: (turnOffMap?.get("file1") as? String)
-                ?: (turnOffMap?.get("file1_url") as? String)
-
-            val off2 = getAny("turn_off_file2_url", "turn_off_file2", "turn_off_file_2", "turnOff2", "file2_off", "off_file2")
-                ?: (turnOffMap?.get("file2") as? String)
-                ?: (turnOffMap?.get("file2_url") as? String)
-
-            if (on1.isNullOrBlank() || on2.isNullOrBlank() || off1.isNullOrBlank() || off2.isNullOrBlank()) {
-                return null
-            }
-
-            // Master file names are strictly preserved from the actual files (extracted from URLs)
-            val f1Name = extractFileNameFromUrl(on1).ifEmpty {
-                extractFileNameFromUrl(off1).ifEmpty {
-                    getAny("file1_name", "target_file1_name", "turn_on_file1_name", "file1Name") ?: "file1"
-                }
-            }
-
-            val f2Name = extractFileNameFromUrl(on2).ifEmpty {
-                extractFileNameFromUrl(off2).ifEmpty {
-                    getAny("file2_name", "target_file2_name", "turn_on_file2_name", "file2Name") ?: "file2"
-                }
-            }
-
-            val targetPath1 = getAny("target_path_1", "targetpath1", "target_path1")
-            val targetPath2 = getAny("target_path_2", "targetpath2", "target_path2")
-
-            return FileManifest(
-                turnOnFile1Url = on1,
-                turnOnFile2Url = on2,
-                turnOffFile1Url = off1,
-                turnOffFile2Url = off2,
-                file1Name = f1Name,
-                file2Name = f2Name,
-                targetPath1Override = targetPath1,
-                targetPath2Override = targetPath2
-            )
-        }
-
-        // 1. Try app_settings/global
-        firestore.collection("app_settings").document("global").get()
-            .addOnSuccessListener { docGlobal ->
-                val manifest1 = parseDocument(docGlobal)
-                if (manifest1 != null) {
-                    onSuccess(manifest1)
-                    return@addOnSuccessListener
-                }
-
-                // 2. Try app_settings/files
-                firestore.collection("app_settings").document("files").get()
-                    .addOnSuccessListener { docFiles ->
-                        val manifest2 = parseDocument(docFiles)
-                        if (manifest2 != null) {
-                            onSuccess(manifest2)
-                            return@addOnSuccessListener
-                        }
-
-                        // 3. Try config/files
-                        firestore.collection("config").document("files").get()
-                            .addOnSuccessListener { docConfig ->
-                                val manifest3 = parseDocument(docConfig)
-                                if (manifest3 != null) {
-                                    onSuccess(manifest3)
-                                } else {
-                                    onError(
-                                        "Could not find 4 file links in Firestore.\n" +
-                                        "Please configure 'app_settings/global' or 'app_settings/files' with:\n" +
-                                        "• turn_on_file1_url\n" +
-                                        "• turn_on_file2_url\n" +
-                                        "• turn_off_file1_url\n" +
-                                        "• turn_off_file2_url"
-                                    )
-                                }
-                            }
-                            .addOnFailureListener { e ->
-                                onError("Failed to read Firestore config: ${e.message}")
-                            }
-                    }
-                    .addOnFailureListener { e ->
-                        onError("Failed to read Firestore app_settings/files: ${e.message}")
-                    }
-            }
-            .addOnFailureListener { e ->
-                onError("Failed to read Firestore app_settings/global: ${e.message}")
-            }
-    }
-
-    private fun extractFileNameFromUrl(url: String): String {
+    fun extractFileNameFromUrl(url: String): String {
         return try {
             val clean = url.substringBefore("?").substringBefore("#")
             clean.substringAfterLast("/").trim()
         } catch (e: Exception) {
             ""
         }
+    }
+
+    /**
+     * Parse document to discover all available scripts dynamically.
+     */
+    fun parseDocumentToConfig(doc: DocumentSnapshot): ScriptsConfig? {
+        if (!doc.exists()) return null
+
+        fun getAny(vararg keys: String): String? {
+            for (k in keys) {
+                val v = doc.getString(k)
+                if (!v.isNullOrBlank()) return v.trim()
+            }
+            return null
+        }
+
+        // Also check map structures
+        val turnOffMap = doc.get("turn_off") as? Map<*, *>
+
+        val off1 = getAny("turn_off_file1_url", "turn_off_file1", "turn_off_file_1", "turnOff1", "file1_off", "off_file1")
+            ?: (turnOffMap?.get("file1") as? String)
+            ?: (turnOffMap?.get("file1_url") as? String)
+
+        val off2 = getAny("turn_off_file2_url", "turn_off_file2", "turn_off_file_2", "turnOff2", "file2_off", "off_file2")
+            ?: (turnOffMap?.get("file2") as? String)
+            ?: (turnOffMap?.get("file2_url") as? String)
+
+        if (off1.isNullOrBlank() || off2.isNullOrBlank()) {
+            return null
+        }
+
+        val discoveredScripts = mutableListOf<ScriptItem>()
+        val foundIds = mutableSetOf<Int>()
+
+        // 1. Check doc data map keys for any patterns like turn_on_file1_url, turn_on_file1_url2, etc.
+        val dataMap = doc.data ?: emptyMap<String, Any>()
+        for (key in dataMap.keys) {
+            val lower = key.lowercase()
+            if (lower.startsWith("turn_on_file1_url") || lower.startsWith("turn_on_file1_")) {
+                val suffix = lower.removePrefix("turn_on_file1_url").removePrefix("turn_on_file1_").removePrefix("_")
+                val id = if (suffix.isEmpty() || suffix == "1") 1 else suffix.toIntOrNull() ?: 1
+                foundIds.add(id)
+            }
+        }
+
+        // 2. Also ensure standard sequential indices 1..20 are checked
+        for (i in 1..20) {
+            foundIds.add(i)
+        }
+
+        val sortedIds = foundIds.sorted()
+        for (id in sortedIds) {
+            val on1: String?
+            val on2: String?
+            val name: String?
+
+            if (id == 1) {
+                val turnOnMap = doc.get("turn_on") as? Map<*, *>
+                on1 = getAny("turn_on_file1_url", "turn_on_file1_url1", "turn_on_file1", "turn_on_file_1", "turnOn1", "file1_on")
+                    ?: (turnOnMap?.get("file1") as? String)
+                    ?: (turnOnMap?.get("file1_url") as? String)
+
+                on2 = getAny("turn_on_file2_url", "turn_on_file2_url1", "turn_on_file2", "turn_on_file_2", "turnOn2", "file2_on")
+                    ?: (turnOnMap?.get("file2") as? String)
+                    ?: (turnOnMap?.get("file2_url") as? String)
+
+                name = getAny("script1_name", "script_name1", "script_name_1", "script1_title", "script_title1") ?: "Script 1"
+            } else {
+                on1 = getAny(
+                    "turn_on_file1_url$id",
+                    "turn_on_file1_url_$id",
+                    "turn_on_file1_$id",
+                    "turn_on_file_1_$id",
+                    "turnOn1_$id"
+                )
+                on2 = getAny(
+                    "turn_on_file2_url$id",
+                    "turn_on_file2_url_$id",
+                    "turn_on_file2_$id",
+                    "turn_on_file_2_$id",
+                    "turnOn2_$id"
+                )
+                name = getAny(
+                    "script${id}_name",
+                    "script_name$id",
+                    "script_name_$id",
+                    "script${id}_title",
+                    "script_title$id"
+                ) ?: "Script $id"
+            }
+
+            if (!on1.isNullOrBlank() && !on2.isNullOrBlank()) {
+                val f1Name = extractFileNameFromUrl(on1).ifEmpty {
+                    extractFileNameFromUrl(off1).ifEmpty {
+                        getAny("file1_name", "target_file1_name") ?: "file1.dat"
+                    }
+                }
+                val f2Name = extractFileNameFromUrl(on2).ifEmpty {
+                    extractFileNameFromUrl(off2).ifEmpty {
+                        getAny("file2_name", "target_file2_name") ?: "file2.dat"
+                    }
+                }
+
+                discoveredScripts.add(
+                    ScriptItem(
+                        id = id,
+                        name = name,
+                        turnOnFile1Url = on1,
+                        turnOnFile2Url = on2,
+                        file1Name = f1Name,
+                        file2Name = f2Name,
+                        rawImageResName = "script$id"
+                    )
+                )
+            }
+        }
+
+        if (discoveredScripts.isEmpty()) {
+            return null
+        }
+
+        val globalF1 = extractFileNameFromUrl(off1).ifEmpty {
+            discoveredScripts[0].file1Name
+        }
+        val globalF2 = extractFileNameFromUrl(off2).ifEmpty {
+            discoveredScripts[0].file2Name
+        }
+
+        val targetPath1 = getAny("target_path_1", "targetpath1", "target_path1")
+        val targetPath2 = getAny("target_path_2", "targetpath2", "target_path2")
+
+        return ScriptsConfig(
+            scripts = discoveredScripts,
+            turnOffFile1Url = off1,
+            turnOffFile2Url = off2,
+            file1Name = globalF1,
+            file2Name = globalF2,
+            targetPath1Override = targetPath1,
+            targetPath2Override = targetPath2
+        )
+    }
+
+    /**
+     * Fetch complete multiple-scripts configuration from Firestore.
+     */
+    fun fetchScriptsConfigFromFirestore(
+        context: Context,
+        onSuccess: (ScriptsConfig) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val firestore = FirebaseFirestore.getInstance()
+
+        firestore.collection("app_settings").document("global").get()
+            .addOnSuccessListener { docGlobal ->
+                val cfg1 = parseDocumentToConfig(docGlobal)
+                if (cfg1 != null) {
+                    saveScriptsConfigToCache(context, cfg1)
+                    onSuccess(cfg1)
+                    return@addOnSuccessListener
+                }
+
+                firestore.collection("app_settings").document("files").get()
+                    .addOnSuccessListener { docFiles ->
+                        val cfg2 = parseDocumentToConfig(docFiles)
+                        if (cfg2 != null) {
+                            saveScriptsConfigToCache(context, cfg2)
+                            onSuccess(cfg2)
+                            return@addOnSuccessListener
+                        }
+
+                        firestore.collection("config").document("files").get()
+                            .addOnSuccessListener { docConfig ->
+                                val cfg3 = parseDocumentToConfig(docConfig)
+                                if (cfg3 != null) {
+                                    saveScriptsConfigToCache(context, cfg3)
+                                    onSuccess(cfg3)
+                                } else {
+                                    // Try loading cached config if Firestore doc had missing fields
+                                    val cached = loadScriptsConfigFromCache(context)
+                                    if (cached != null) {
+                                        onSuccess(cached)
+                                    } else {
+                                        onError(
+                                            "Could not find scripts config in Firestore.\n" +
+                                            "Please ensure 'turn_on_file1_url' and 'turn_on_file2_url' (or multiple scripts) " +
+                                            "and 'turn_off_file1_url' & 'turn_off_file2_url' exist in app_settings/global."
+                                        )
+                                    }
+                                }
+                            }
+                            .addOnFailureListener { e ->
+                                val cached = loadScriptsConfigFromCache(context)
+                                if (cached != null) onSuccess(cached)
+                                else onError("Failed to read Firestore config: ${e.message}")
+                            }
+                    }
+                    .addOnFailureListener { e ->
+                        val cached = loadScriptsConfigFromCache(context)
+                        if (cached != null) onSuccess(cached)
+                        else onError("Failed to read Firestore app_settings/files: ${e.message}")
+                    }
+            }
+            .addOnFailureListener { e ->
+                val cached = loadScriptsConfigFromCache(context)
+                if (cached != null) onSuccess(cached)
+                else onError("Failed to read Firestore app_settings/global: ${e.message}")
+            }
+    }
+
+    private fun saveScriptsConfigToCache(context: Context, config: ScriptsConfig) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.putInt(KEY_CACHED_SCRIPTS_COUNT, config.scripts.size)
+        editor.putString("cache_turn_off_1", config.turnOffFile1Url)
+        editor.putString("cache_turn_off_2", config.turnOffFile2Url)
+        for ((idx, script) in config.scripts.withIndex()) {
+            editor.putInt("cache_s_${idx}_id", script.id)
+            editor.putString("cache_s_${idx}_name", script.name)
+            editor.putString("cache_s_${idx}_url1", script.turnOnFile1Url)
+            editor.putString("cache_s_${idx}_url2", script.turnOnFile2Url)
+            editor.putString("cache_s_${idx}_f1", script.file1Name)
+            editor.putString("cache_s_${idx}_f2", script.file2Name)
+        }
+        editor.apply()
+    }
+
+    private fun loadScriptsConfigFromCache(context: Context): ScriptsConfig? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val count = prefs.getInt(KEY_CACHED_SCRIPTS_COUNT, 0)
+        val off1 = prefs.getString("cache_turn_off_1", null)
+        val off2 = prefs.getString("cache_turn_off_2", null)
+        if (count == 0 || off1 == null || off2 == null) return null
+
+        val list = mutableListOf<ScriptItem>()
+        for (i in 0 until count) {
+            val id = prefs.getInt("cache_s_${i}_id", i + 1)
+            val name = prefs.getString("cache_s_${i}_name", "Script $id") ?: "Script $id"
+            val url1 = prefs.getString("cache_s_${i}_url1", "") ?: ""
+            val url2 = prefs.getString("cache_s_${i}_url2", "") ?: ""
+            val f1 = prefs.getString("cache_s_${i}_f1", "file1.dat") ?: "file1.dat"
+            val f2 = prefs.getString("cache_s_${i}_f2", "file2.dat") ?: "file2.dat"
+            if (url1.isNotEmpty() && url2.isNotEmpty()) {
+                list.add(ScriptItem(id, name, url1, url2, f1, f2))
+            }
+        }
+        if (list.isEmpty()) return null
+        return ScriptsConfig(
+            scripts = list,
+            turnOffFile1Url = off1,
+            turnOffFile2Url = off2,
+            file1Name = list[0].file1Name,
+            file2Name = list[0].file2Name
+        )
+    }
+
+    /**
+     * Backwards compatible single manifest fetcher.
+     */
+    fun fetchManifestFromFirestore(
+        context: Context,
+        onSuccess: (FileManifest) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        fetchScriptsConfigFromFirestore(
+            context = context,
+            onSuccess = { cfg ->
+                val activeId = getActiveScriptId(context)
+                val targetScript = cfg.scripts.find { it.id == activeId } ?: cfg.scripts.first()
+                onSuccess(
+                    FileManifest(
+                        turnOnFile1Url = targetScript.turnOnFile1Url,
+                        turnOnFile2Url = targetScript.turnOnFile2Url,
+                        turnOffFile1Url = cfg.turnOffFile1Url,
+                        turnOffFile2Url = cfg.turnOffFile2Url,
+                        file1Name = targetScript.file1Name,
+                        file2Name = targetScript.file2Name,
+                        targetPath1Override = cfg.targetPath1Override,
+                        targetPath2Override = cfg.targetPath2Override
+                    )
+                )
+            },
+            onError = onError
+        )
     }
 
     /**
@@ -340,88 +608,101 @@ object PanelFileManager {
         val tempFile = File(destFile.parentFile, "${destFile.name}.tmp")
         if (tempFile.exists()) tempFile.delete()
 
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                lastLog = "Download failed ($url): HTTP ${response.code}"
-                return false
-            }
-            val body = response.body ?: run {
-                lastLog = "Response body is empty ($url)"
-                return false
-            }
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    lastLog = "Download failed ($url): HTTP ${response.code}"
+                    return false
+                }
+                val body = response.body ?: run {
+                    lastLog = "Response body is empty ($url)"
+                    return false
+                }
 
-            val totalBytes = body.contentLength()
-            var downloadedBytes = 0L
+                val totalBytes = body.contentLength()
+                var downloadedBytes = 0L
 
-            body.byteStream().use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    val buffer = ByteArray(8 * 1024)
-                    var bytesRead: Int
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
-                        onProgress(downloadedBytes, totalBytes)
+                body.byteStream().use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(8 * 1024)
+                        var bytesRead: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            downloadedBytes += bytesRead
+                            onProgress(downloadedBytes, totalBytes)
+                        }
+                        output.flush()
                     }
-                    output.flush()
                 }
             }
+
+            if (tempFile.exists() && tempFile.length() > 0) {
+                if (destFile.exists()) destFile.delete()
+                tempFile.renameTo(destFile)
+                destFile.setReadable(true, false)
+                return true
+            }
+        } catch (e: Exception) {
+            lastLog = "Download error ($url): ${e.message}"
+            return false
         }
 
-        if (tempFile.exists() && tempFile.length() > 0) {
-            if (destFile.exists()) destFile.delete()
-            tempFile.renameTo(destFile)
-            destFile.setReadable(true, false)
-            return true
-        }
         lastLog = "Downloaded file is empty or missing ($url)"
         return false
     }
 
     /**
-     * Downloads all 4 files and stages them permanently.
+     * Downloads and stages a specific script and the turn off files.
      */
-    fun downloadAndStageAllFiles(
+    fun downloadAndStageSpecificScript(
         context: Context,
-        manifest: FileManifest,
+        script: ScriptItem,
+        turnOffFile1Url: String,
+        turnOffFile2Url: String,
         onProgress: (status: String, percent: Int) -> Unit,
         onComplete: (success: Boolean, errorMsg: String?) -> Unit
     ) {
         Thread {
             try {
-                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString(KEY_FILE1_NAME, manifest.file1Name)
-                    .putString(KEY_FILE2_NAME, manifest.file2Name)
-                    .apply()
+                val scriptDir = getScriptStagedDir(context, script.id)
+                val f1Script = File(scriptDir, script.file1Name)
+                val f2Script = File(scriptDir, script.file2Name)
 
-                val f1On = File(getTurnOnDir(context), manifest.file1Name)
-                val f2On = File(getTurnOnDir(context), manifest.file2Name)
-                val f1Off = File(getTurnOffDir(context), manifest.file1Name)
-                val f2Off = File(getTurnOffDir(context), manifest.file2Name)
+                val turnOnDir = getTurnOnDir(context)
+                val f1On = File(turnOnDir, script.file1Name)
+                val f2On = File(turnOnDir, script.file2Name)
 
-                // 1. Download Turn ON File 1
-                onProgress("Downloading Turn ON (File 1/2)...", 10)
-                if (!downloadFile(manifest.turnOnFile1Url, f1On) { cur, total ->
+                val turnOffDir = getTurnOffDir(context)
+                val f1Off = File(turnOffDir, script.file1Name)
+                val f2Off = File(turnOffDir, script.file2Name)
+
+                // 1. Download Turn ON File 1 for this script
+                onProgress("Downloading ${script.name} (File 1/2)...", 10)
+                if (!downloadFile(script.turnOnFile1Url, f1Script) { cur, total ->
                         val p = if (total > 0) 10 + ((cur * 20) / total).toInt() else 20
-                        onProgress("Downloading Turn ON (File 1/2)...", p)
+                        onProgress("Downloading ${script.name} (File 1/2)...", p)
                     }) {
-                    onComplete(false, "Failed to download Turn ON File 1: $lastLog")
+                    onComplete(false, "Failed to download ${script.name} File 1: $lastLog")
                     return@Thread
                 }
+                // Also mirror to active turn_on directory
+                f1Script.copyTo(f1On, overwrite = true)
 
-                // 2. Download Turn ON File 2
-                onProgress("Downloading Turn ON (File 2/2)...", 35)
-                if (!downloadFile(manifest.turnOnFile2Url, f2On) { cur, total ->
+                // 2. Download Turn ON File 2 for this script
+                onProgress("Downloading ${script.name} (File 2/2)...", 35)
+                if (!downloadFile(script.turnOnFile2Url, f2Script) { cur, total ->
                         val p = if (total > 0) 35 + ((cur * 20) / total).toInt() else 45
-                        onProgress("Downloading Turn ON (File 2/2)...", p)
+                        onProgress("Downloading ${script.name} (File 2/2)...", p)
                     }) {
-                    onComplete(false, "Failed to download Turn ON File 2: $lastLog")
+                    onComplete(false, "Failed to download ${script.name} File 2: $lastLog")
                     return@Thread
                 }
+                // Also mirror to active turn_on directory
+                f2Script.copyTo(f2On, overwrite = true)
 
-                // 3. Download Turn OFF File 1
+                // 3. Download Turn OFF File 1 (if needed or update)
                 onProgress("Downloading Turn OFF (File 1/2)...", 60)
-                if (!downloadFile(manifest.turnOffFile1Url, f1Off) { cur, total ->
+                if (!downloadFile(turnOffFile1Url, f1Off) { cur, total ->
                         val p = if (total > 0) 60 + ((cur * 20) / total).toInt() else 70
                         onProgress("Downloading Turn OFF (File 1/2)...", p)
                     }) {
@@ -431,7 +712,7 @@ object PanelFileManager {
 
                 // 4. Download Turn OFF File 2
                 onProgress("Downloading Turn OFF (File 2/2)...", 85)
-                if (!downloadFile(manifest.turnOffFile2Url, f2Off) { cur, total ->
+                if (!downloadFile(turnOffFile2Url, f2Off) { cur, total ->
                         val p = if (total > 0) 85 + ((cur * 15) / total).toInt() else 95
                         onProgress("Downloading Turn OFF (File 2/2)...", p)
                     }) {
@@ -439,15 +720,18 @@ object PanelFileManager {
                     return@Thread
                 }
 
-                // Save filenames and mark activated
+                // Update preferences
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.edit()
-                    .putString(KEY_FILE1_NAME, manifest.file1Name)
-                    .putString(KEY_FILE2_NAME, manifest.file2Name)
+                    .putString(KEY_FILE1_NAME, script.file1Name)
+                    .putString(KEY_FILE2_NAME, script.file2Name)
+                    .putInt(KEY_ACTIVE_SCRIPT_ID, script.id)
+                    .putString(KEY_ACTIVE_SCRIPT_NAME, script.name)
                     .putBoolean(KEY_FILES_ACTIVATED, true)
                     .putString(KEY_MOD_STATE, "OFF")
                     .apply()
 
-                onProgress("Activation complete! All 4 files ready.", 100)
+                onProgress("Staging complete! ${script.name} ready.", 100)
                 onComplete(true, null)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -458,18 +742,43 @@ object PanelFileManager {
     }
 
     /**
+     * Downloads files for a single FileManifest (backwards compatibility).
+     */
+    fun downloadAndStageAllFiles(
+        context: Context,
+        manifest: FileManifest,
+        onProgress: (status: String, percent: Int) -> Unit,
+        onComplete: (success: Boolean, errorMsg: String?) -> Unit
+    ) {
+        val scriptItem = ScriptItem(
+            id = getActiveScriptId(context),
+            name = getActiveScriptName(context),
+            turnOnFile1Url = manifest.turnOnFile1Url,
+            turnOnFile2Url = manifest.turnOnFile2Url,
+            file1Name = manifest.file1Name,
+            file2Name = manifest.file2Name
+        )
+        downloadAndStageSpecificScript(
+            context = context,
+            script = scriptItem,
+            turnOffFile1Url = manifest.turnOffFile1Url,
+            turnOffFile2Url = manifest.turnOffFile2Url,
+            onProgress = onProgress,
+            onComplete = onComplete
+        )
+    }
+
+    /**
      * Normalizes a target path and splits into (Directory, optional SpecificFileName).
      */
     private fun resolveTargetLocation(targetPath: String, defaultFileName: String): Pair<String, String> {
         val trimmed = targetPath.trim()
         val file = File(trimmed)
 
-        // If targetPath looks like a directory path (ends with / or doesn't have an extension)
         return if (trimmed.endsWith("/") || file.isDirectory || !trimmed.substringAfterLast("/").contains(".")) {
             val dirPath = if (trimmed.endsWith("/")) trimmed.dropLast(1) else trimmed
             Pair(dirPath, defaultFileName)
         } else {
-            // It specifies a direct file path
             val parent = file.parent ?: "/storage/emulated/0"
             val name = file.name
             Pair(parent, name)
@@ -478,7 +787,6 @@ object PanelFileManager {
 
     /**
      * Checks if directory exists WITHOUT creating it.
-     * Uses Shizuku if available, otherwise File.isDirectory.
      */
     fun checkDirectoryExists(dirPath: String): Boolean {
         return RenameUtil.checkDirExists(dirPath)
@@ -538,8 +846,6 @@ object PanelFileManager {
      * Apply TURN ON:
      * Copies Turn ON File 1 to Target Path 1 (deleting old).
      * Copies Turn ON File 2 to Target Path 2 (deleting old).
-     *
-     * Rule: If destination directory does not exist, DO NOT CREATE IT; show error with logs.
      */
     fun applyTurnOn(context: Context): Pair<Boolean, String> {
         if (!areFilesStaged(context)) {
@@ -556,7 +862,6 @@ object PanelFileManager {
         val (dir1, targetFileName1) = resolveTargetLocation(rawPath1, defaultFile1Name)
         val (dir2, targetFileName2) = resolveTargetLocation(rawPath2, defaultFile2Name)
 
-        // Strict Check: Destination path MUST exist; do NOT create if missing!
         if (!checkDirectoryExists(dir1)) {
             val err = "Destination path 1 does NOT exist:\n'$dir1'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
             lastLog = err
@@ -592,7 +897,8 @@ object PanelFileManager {
         }
 
         setModState(context, "ON")
-        val msg = "Turn ON successful!\nPlaced:\n• ${destFile1.absolutePath}\n• ${destFile2.absolutePath}"
+        val activeName = getActiveScriptName(context)
+        val msg = "$activeName turned ON successfully!\nPlaced:\n• ${destFile1.absolutePath}\n• ${destFile2.absolutePath}"
         lastLog = msg
         Log.i(TAG, msg)
         return Pair(true, msg)
@@ -602,8 +908,6 @@ object PanelFileManager {
      * Apply TURN OFF:
      * Copies Turn OFF File 1 to Target Path 1 (deleting old).
      * Copies Turn OFF File 2 to Target Path 2 (deleting old).
-     *
-     * Rule: If destination directory does not exist, DO NOT CREATE IT; show error with logs.
      */
     fun applyTurnOff(context: Context): Pair<Boolean, String> {
         if (!areFilesStaged(context)) {
@@ -620,7 +924,6 @@ object PanelFileManager {
         val (dir1, targetFileName1) = resolveTargetLocation(rawPath1, defaultFile1Name)
         val (dir2, targetFileName2) = resolveTargetLocation(rawPath2, defaultFile2Name)
 
-        // Strict Check: Destination path MUST exist; do NOT create if missing!
         if (!checkDirectoryExists(dir1)) {
             val err = "Destination path 1 does NOT exist:\n'$dir1'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
             lastLog = err

@@ -150,7 +150,7 @@ class HomeFragment : Fragment() {
                 Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            startDownloadActivation()
+            showActivateScriptSelection()
         }
 
         btnTogglePower.setOnClickListener {
@@ -163,7 +163,7 @@ class HomeFragment : Fragment() {
             if (isOn) {
                 handleTurnOff()
             } else {
-                handleTurnOn()
+                showTurnOnScriptSelection()
             }
         }
 
@@ -501,9 +501,10 @@ class HomeFragment : Fragment() {
                     btnTogglePower.visibility = View.VISIBLE
                     btnTogglePower.isEnabled = true
 
+                    val activeScriptName = PanelFileManager.getActiveScriptName(ctx)
                     if (isModActive) {
                         isOn = true
-                        tvStatus.text = "Status: ON 🟢"
+                        tvStatus.text = "Status: ON 🟢 ($activeScriptName)"
                         tvStatus.setTextColor(Color.parseColor("#00E676"))
                         
                         btnTogglePower.text = "TURN OFF"
@@ -535,7 +536,7 @@ class HomeFragment : Fragment() {
                         }
                     } else {
                         isOn = false
-                        tvStatus.text = "Status: OFF 🔴"
+                        tvStatus.text = "Status: OFF 🔴 ($activeScriptName)"
                         tvStatus.setTextColor(Color.parseColor("#FF5252"))
 
                         btnTogglePower.text = "TURN ON"
@@ -552,7 +553,21 @@ class HomeFragment : Fragment() {
         tvTimer.text = "Timer: Unlimited"
     }
 
-    private fun startDownloadActivation() {
+    private fun showActivateScriptSelection() {
+        val ctx = context ?: return
+        com.example.ui.ScriptSelectionDialog(
+            context = ctx,
+            mode = com.example.ui.ScriptSelectionDialog.Mode.ACTIVATE_FIRST_TIME,
+            onScriptSelected = { script, config ->
+                startDownloadActivation(script, config)
+            }
+        ).show()
+    }
+
+    private fun startDownloadActivation(
+        selectedScript: PanelFileManager.ScriptItem? = null,
+        config: PanelFileManager.ScriptsConfig? = null
+    ) {
         val ctx = context ?: return
         if (FreezeManager.isCurrentlyFrozen(ctx)) {
             val reason = FreezeManager.getFreezeReason(ctx)
@@ -560,71 +575,96 @@ class HomeFragment : Fragment() {
             return
         }
 
+        if (selectedScript == null || config == null) {
+            showActivateScriptSelection()
+            return
+        }
+
         progressBar.visibility = View.VISIBLE
-        progressBar.isIndeterminate = true
+        progressBar.isIndeterminate = false
+        progressBar.progress = 0
         tvProgress.visibility = View.VISIBLE
-        tvProgress.text = "Connecting to Firebase..."
+        tvProgress.text = "Downloading ${selectedScript.name}..."
         btnActivate.isEnabled = false
 
-        PanelFileManager.fetchManifestFromFirestore(
+        PanelFileManager.downloadAndStageSpecificScript(
             context = ctx,
-            onSuccess = { manifest ->
+            script = selectedScript,
+            turnOffFile1Url = config.turnOffFile1Url,
+            turnOffFile2Url = config.turnOffFile2Url,
+            onProgress = { status, percent ->
                 activity?.runOnUiThread {
                     if (!isAdded) return@runOnUiThread
-                    tvProgress.text = "Starting download of 4 files..."
-                    progressBar.isIndeterminate = false
-                    progressBar.progress = 0
+                    tvProgress.text = status
+                    progressBar.isIndeterminate = (percent <= 0)
+                    progressBar.progress = percent
                 }
-                PanelFileManager.downloadAndStageAllFiles(
-                    context = ctx,
-                    manifest = manifest,
-                    onProgress = { status, percent ->
-                        activity?.runOnUiThread {
-                            if (!isAdded) return@runOnUiThread
-                            tvProgress.text = status
-                            progressBar.isIndeterminate = (percent <= 0)
-                            progressBar.progress = percent
-                        }
-                    },
-                    onComplete = { success, errorMsg ->
-                        activity?.runOnUiThread {
-                            if (!isAdded) return@runOnUiThread
-                            progressBar.visibility = View.GONE
-                            tvProgress.visibility = View.GONE
-                            btnActivate.isEnabled = true
-                            if (success) {
-                                Toast.makeText(ctx, "Activation successful! All 4 files downloaded & saved.", Toast.LENGTH_LONG).show()
-                                updateUIState()
-                            } else {
-                                val err = errorMsg ?: "Unknown error downloading files"
-                                Toast.makeText(ctx, "Activation failed: $err", Toast.LENGTH_LONG).show()
-                                android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-                                    .setTitle("Activation Error")
-                                    .setMessage(err)
-                                    .setPositiveButton("OK", null)
-                                    .show()
-                                updateUIState()
-                            }
-                        }
-                    }
-                )
             },
-            onError = { err ->
+            onComplete = { success, errorMsg ->
                 activity?.runOnUiThread {
                     if (!isAdded) return@runOnUiThread
                     progressBar.visibility = View.GONE
                     tvProgress.visibility = View.GONE
                     btnActivate.isEnabled = true
-                    Toast.makeText(ctx, "Failed to load config: $err", Toast.LENGTH_LONG).show()
-                    android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-                        .setTitle("Firestore Configuration Needed")
-                        .setMessage(err)
-                        .setPositiveButton("OK", null)
-                        .show()
-                    updateUIState()
+                    if (success) {
+                        Toast.makeText(ctx, "Activation successful! ${selectedScript.name} ready.", Toast.LENGTH_LONG).show()
+                        updateUIState()
+                    } else {
+                        val err = errorMsg ?: "Unknown error downloading files"
+                        Toast.makeText(ctx, "Activation failed: $err", Toast.LENGTH_LONG).show()
+                        android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                            .setTitle("Activation Error")
+                            .setMessage(err)
+                            .setPositiveButton("OK", null)
+                            .show()
+                        updateUIState()
+                    }
                 }
             }
         )
+    }
+
+    private fun showTurnOnScriptSelection() {
+        val ctx = context ?: return
+        com.example.ui.ScriptSelectionDialog(
+            context = ctx,
+            mode = com.example.ui.ScriptSelectionDialog.Mode.TURN_ON,
+            onScriptSelected = { script, config ->
+                if (PanelFileManager.isScriptStaged(ctx, script)) {
+                    PanelFileManager.activateScriptFromStaged(ctx, script)
+                    handleTurnOn()
+                } else {
+                    val progressDialog = android.app.AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                        .setTitle("Downloading ${script.name}")
+                        .setMessage("Preparing script files...")
+                        .setCancelable(false)
+                        .create()
+                    progressDialog.show()
+
+                    PanelFileManager.downloadAndStageSpecificScript(
+                        context = ctx,
+                        script = script,
+                        turnOffFile1Url = config.turnOffFile1Url,
+                        turnOffFile2Url = config.turnOffFile2Url,
+                        onProgress = { status, percent ->
+                            activity?.runOnUiThread {
+                                progressDialog.setMessage("$status ($percent%)")
+                            }
+                        },
+                        onComplete = { success, errorMsg ->
+                            activity?.runOnUiThread {
+                                if (progressDialog.isShowing) progressDialog.dismiss()
+                                if (success) {
+                                    handleTurnOn()
+                                } else {
+                                    Toast.makeText(ctx, "Failed to download script: $errorMsg", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        ).show()
     }
 
     private fun handleTurnOn() {

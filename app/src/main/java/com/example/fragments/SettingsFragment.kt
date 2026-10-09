@@ -27,54 +27,88 @@ class SettingsFragment : Fragment() {
 
     private fun processNewScript() {
         val ctx = context ?: return
-        
-        android.app.AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-            .setTitle("Re-Download / Update Files")
-            .setMessage("This will fetch the latest 4 files from Firestore and store them safely. Continue?")
-            .setPositiveButton("Yes") { _, _ ->
-                val progressDialog = android.app.AlertDialog.Builder(ctx)
-                    .setTitle("Syncing Files")
-                    .setMessage("Fetching manifest from Firestore...")
-                    .setCancelable(false)
-                    .create()
-                progressDialog.show()
-        
-                PanelFileManager.fetchManifestFromFirestore(
-                    context = ctx,
-                    onSuccess = { manifest ->
-                        requireActivity().runOnUiThread { progressDialog.setMessage("Downloading 4 files...") }
-                        PanelFileManager.downloadAndStageAllFiles(
-                            context = ctx,
-                            manifest = manifest,
-                            onProgress = { status, percent ->
-                                requireActivity().runOnUiThread { progressDialog.setMessage("$status ($percent%)") }
-                            },
-                            onComplete = { success, errorMsg ->
-                                requireActivity().runOnUiThread {
-                                    if (progressDialog.isShowing) progressDialog.dismiss()
-                                    if (success) {
-                                        Toast.makeText(ctx, "Files updated & staged successfully!", Toast.LENGTH_SHORT).show()
-                                        parentFragmentManager.beginTransaction()
-                                            .detach(this@SettingsFragment)
-                                            .attach(this@SettingsFragment)
-                                            .commit()
-                                    } else {
-                                        Toast.makeText(ctx, "Error: $errorMsg", Toast.LENGTH_LONG).show()
-                                    }
+        com.example.ui.ScriptSelectionDialog(
+            context = ctx,
+            mode = com.example.ui.ScriptSelectionDialog.Mode.INSTALL_NEW,
+            onScriptSelected = { script, config ->
+                if (PanelFileManager.isScriptStaged(ctx, script)) {
+                    val ok = PanelFileManager.activateScriptFromStaged(ctx, script)
+                    if (ok) {
+                        Toast.makeText(ctx, "Switched to ${script.name}! ⚡", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(ctx, "Activated ${script.name}", Toast.LENGTH_SHORT).show()
+                    }
+                    updateScriptDisplays()
+                } else {
+                    val progressDialog = android.app.AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                        .setTitle("Installing ${script.name}")
+                        .setMessage("Downloading script files from cloud...")
+                        .setCancelable(false)
+                        .create()
+                    progressDialog.show()
+
+                    PanelFileManager.downloadAndStageSpecificScript(
+                        context = ctx,
+                        script = script,
+                        turnOffFile1Url = config.turnOffFile1Url,
+                        turnOffFile2Url = config.turnOffFile2Url,
+                        onProgress = { status, percent ->
+                            requireActivity().runOnUiThread {
+                                progressDialog.setMessage("$status ($percent%)")
+                            }
+                        },
+                        onComplete = { success, errorMsg ->
+                            requireActivity().runOnUiThread {
+                                if (progressDialog.isShowing) progressDialog.dismiss()
+                                if (success) {
+                                    Toast.makeText(ctx, "${script.name} installed & activated! ⚡", Toast.LENGTH_SHORT).show()
+                                    updateScriptDisplays()
+                                } else {
+                                    Toast.makeText(ctx, "Error: $errorMsg", Toast.LENGTH_LONG).show()
                                 }
                             }
-                        )
-                    },
-                    onError = { err ->
-                        requireActivity().runOnUiThread {
-                            if (progressDialog.isShowing) progressDialog.dismiss()
-                            Toast.makeText(ctx, "Config Error: $err", Toast.LENGTH_LONG).show()
                         }
-                    }
-                )
+                    )
+                }
             }
-            .setNegativeButton("No", null)
-            .show()
+        ).show()
+    }
+
+    private fun updateScriptDisplays() {
+        val ctx = context ?: return
+        Thread {
+            var current = "Not Staged"
+            if (PanelFileManager.areFilesStaged(ctx)) {
+                val scriptName = PanelFileManager.getActiveScriptName(ctx)
+                current = if (PanelFileManager.isModOn(ctx)) "$scriptName (ON 🟢)" else "$scriptName (OFF 🔴)"
+            }
+            requireActivity().runOnUiThread {
+                if (isAdded) {
+                    tvCurrentScript.text = "Current: $current"
+                }
+            }
+        }.start()
+
+        PanelFileManager.fetchScriptsConfigFromFirestore(
+            context = ctx,
+            onSuccess = { config ->
+                activity?.runOnUiThread {
+                    if (isAdded) {
+                        val activeId = PanelFileManager.getActiveScriptId(ctx)
+                        val sb = StringBuilder("Available Scripts (${config.scripts.size}):\n")
+                        config.scripts.forEach { s ->
+                            val isDownloaded = PanelFileManager.isScriptStaged(ctx, s)
+                            val status = if (s.id == activeId) "Active 🟢" else if (isDownloaded) "Downloaded" else "Cloud"
+                            sb.append("• ${s.name} ($status)\n")
+                        }
+                        view?.findViewById<TextView>(R.id.tv_available_scripts)?.text = sb.toString().trim()
+                    }
+                }
+            },
+            onError = {
+                // Keep default or fallback
+            }
+        )
     }
 
     override fun onCreateView(
@@ -91,20 +125,7 @@ class SettingsFragment : Fragment() {
         view.findViewById<ImageView>(R.id.btn_back).visibility = View.VISIBLE
 
         tvCurrentScript = view.findViewById(R.id.tv_current_script)
-        val tvAvailableScripts = view.findViewById<TextView>(R.id.tv_available_scripts)
-
-        Thread {
-            val ctx = context
-            var current = "Not Staged"
-            if (ctx != null && PanelFileManager.areFilesStaged(ctx)) {
-                current = if (PanelFileManager.isModOn(ctx)) "Mod (ON 🟢)" else "Mod (OFF 🔴)"
-            }
-            
-            requireActivity().runOnUiThread {
-                tvCurrentScript.text = "Current: $current"
-                tvAvailableScripts.text = "Available Scripts:\n- 4-File Managed Profile"
-            }
-        }.start()
+        updateScriptDisplays()
 
         val switchHologram = view.findViewById<Switch>(R.id.switch_hologram)
         val switchAntiBan = view.findViewById<Switch>(R.id.switch_anti_ban)
