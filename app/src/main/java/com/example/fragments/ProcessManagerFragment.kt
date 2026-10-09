@@ -1,7 +1,5 @@
 package com.example.fragments
 
-import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -19,112 +17,105 @@ import com.example.utils.RenameUtil
 class ProcessManagerFragment : Fragment() {
 
     data class ProcessItem(
+        val pkgName: String,
         val pid: String,
-        val user: String,
-        val name: String,
-        val label: String,
-        val icon: Drawable?
+        val appName: String,
+        val icon: android.graphics.drawable.Drawable?
     )
 
     private val processList = mutableListOf<ProcessItem>()
     private lateinit var adapter: ProcessAdapter
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View? {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view = inflater.inflate(R.layout.fragment_process_manager, container, false)
-        view.findViewById<ImageView>(R.id.iv_back)?.setOnClickListener {
-            (activity as? MainActivity)?.switchFragment(HomeFragment())
+        
+        view.findViewById<ImageView>(R.id.iv_back).setOnClickListener {
+            (requireActivity() as MainActivity).switchFragment(HomeFragment())
         }
 
         val rv = view.findViewById<RecyclerView>(R.id.rv_processes)
-        rv.layoutManager = LinearLayoutManager(context)
-        adapter = ProcessAdapter(processList) { item ->
-            killProcess(item)
+        adapter = ProcessAdapter(processList) { proc ->
+            freezeProcess(proc)
         }
+        rv.layoutManager = LinearLayoutManager(context)
         rv.adapter = adapter
 
         loadProcesses()
+
         return view
     }
 
     private fun loadProcesses() {
-        val appContext = context?.applicationContext ?: return
         Thread {
-            processList.clear()
-            val pm = appContext.packageManager
-            if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                val out = RenameUtil.executeShizukuCommandWithOutput("ps -A -o PID,USER,NAME")
-                val lines = out.lines().drop(1)
-                for (l in lines) {
-                    val parts = l.trim().split(Regex("\\s+"))
-                    if (parts.size >= 3) {
-                        val pid = parts[0]
-                        val user = parts[1]
-                        val name = parts[2]
-                        var label = name
-                        var icon: Drawable? = null
-                        try {
-                            val appInfo = pm.getApplicationInfo(name, 0)
-                            label = pm.getApplicationLabel(appInfo).toString()
-                            icon = pm.getApplicationIcon(appInfo)
-                        } catch (_: Exception) {}
-                        processList.add(ProcessItem(pid, user, name, label, icon))
-                    }
-                }
-            }
-            activity?.runOnUiThread {
-                if (isAdded) {
-                    adapter.notifyDataSetChanged()
-                }
-            }
-        }.start()
-    }
+            val psOutput = RenameUtil.executeShizukuCommandWithOutput("ps -A | grep u0_")
+            val lines = psOutput.split("\n")
+            
+            val pm = requireContext().packageManager
+            val newProcs = mutableListOf<ProcessItem>()
+            val seenPkg = mutableSetOf<String>()
 
-    private fun killProcess(item: ProcessItem) {
-        Thread {
-            if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                RenameUtil.executeShizukuCommand("kill -9 ${item.pid} || am force-stop ${item.name}")
+            for (line in lines) {
+                if (line.isBlank()) continue
+                // USER PID PPID VZ RSS WCHAN ADDR S NAME
+                val parts = line.trim().split("\\s+".toRegex())
+                if (parts.size >= 9) {
+                    val pid = parts[1]
+                    val pkgName = parts.last().substringBefore(":") // some are com.pkg:service
+                    if (!pkgName.contains(".")) continue // Only interested in app packages
+                    if (seenPkg.contains(pkgName)) continue // Only add each package once
+                    
+                    try {
+                        val appInfo = pm.getApplicationInfo(pkgName, 0)
+                        val appName = pm.getApplicationLabel(appInfo).toString()
+                        val icon = pm.getApplicationIcon(appInfo)
+                        
+                        seenPkg.add(pkgName)
+                        newProcs.add(ProcessItem(pkgName, pid, appName, icon))
+                    } catch (e: Exception) {}
+                }
             }
-            activity?.runOnUiThread {
-                processList.remove(item)
+
+            requireActivity().runOnUiThread {
+                processList.clear()
+                processList.addAll(newProcs)
+                processList.sortBy { it.appName }
                 adapter.notifyDataSetChanged()
-                Toast.makeText(context, "Stopped ${item.label}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Loaded ${processList.size} running processes", Toast.LENGTH_SHORT).show()
             }
         }.start()
     }
 
-    class ProcessAdapter(
-        private val items: List<ProcessItem>,
-        private val onKill: (ProcessItem) -> Unit
-    ) : RecyclerView.Adapter<ProcessAdapter.VH>() {
+    private fun freezeProcess(proc: ProcessItem) {
+        Thread {
+            val success = RenameUtil.executeShizukuCommand("am force-stop ${proc.pkgName}")
+            requireActivity().runOnUiThread {
+                if (success) {
+                    Toast.makeText(context, "Stopped ${proc.appName}", Toast.LENGTH_SHORT).show()
+                    loadProcesses()
+                } else {
+                    Toast.makeText(context, "Failed to stop", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
 
-        class VH(v: View) : RecyclerView.ViewHolder(v) {
+    inner class ProcessAdapter(private val list: List<ProcessItem>, private val onFreeze: (ProcessItem) -> Unit) : RecyclerView.Adapter<ProcessAdapter.VH>() {
+        inner class VH(v: View) : RecyclerView.ViewHolder(v) {
             val ivIcon: ImageView = v.findViewById(R.id.iv_process_icon)
             val tvName: TextView = v.findViewById(R.id.tv_process_name)
             val tvPid: TextView = v.findViewById(R.id.tv_process_pid)
-            val btnFreeze: View = v.findViewById(R.id.btn_freeze)
+            val btnFreeze: ImageView = v.findViewById(R.id.btn_freeze)
         }
-
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_process, parent, false)
-            return VH(v)
+            return VH(LayoutInflater.from(parent.context).inflate(R.layout.item_process, parent, false))
         }
-
         override fun onBindViewHolder(holder: VH, position: Int) {
-            val item = items[position]
-            holder.tvName.text = item.label
-            holder.tvPid.text = "PID: ${item.pid} | ${item.name}"
-            if (item.icon != null) {
-                holder.ivIcon.setImageDrawable(item.icon)
-            } else {
-                holder.ivIcon.setImageResource(R.mipmap.ic_launcher)
-            }
-            holder.btnFreeze.setOnClickListener { onKill(item) }
+            val p = list[position]
+            holder.ivIcon.setImageDrawable(p.icon)
+            holder.tvName.text = p.appName
+            holder.tvPid.text = "PID: ${p.pid} | Pkg: ${p.pkgName}"
+            holder.btnFreeze.setOnClickListener { onFreeze(p) }
         }
-
-        override fun getItemCount(): Int = items.size
+        override fun getItemCount() = list.size
     }
 }

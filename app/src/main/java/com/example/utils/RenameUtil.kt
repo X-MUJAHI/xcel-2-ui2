@@ -1,202 +1,331 @@
 package com.example.utils
 
-import android.content.Context
-import android.util.Log
+import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuRemoteProcess
-import java.io.BufferedReader
+import com.example.MainActivity
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.InputStreamReader
-import java.util.zip.ZipInputStream
 
 object RenameUtil {
-    private const val TAG = "RenameUtil"
-    var appContext: Context? = null
     var useShizukuOps: Boolean = true
     var lastError: String = ""
 
     fun shizukuAvailable(): Boolean {
         return try {
-            if (Shizuku.pingBinder()) {
-                Shizuku.checkSelfPermission() == 0
-            } else {
-                false
-            }
-        } catch (_: Exception) {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
             false
         }
     }
+
+    fun executeShizukuCommand(command: String): Boolean {
+        if (!shizukuAvailable()) {
+            lastError = "Shizuku not available or permission denied"
+            return false
+        }
+        return try {
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            ).apply {
+                isAccessible = true
+            }
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("sh", "-c", command),
+                null,
+                null
+            ) as rikka.shizuku.ShizukuRemoteProcess
+
+            val errBuilder = StringBuilder()
+            val errThread = Thread {
+                try {
+                    val errReader = java.io.BufferedReader(java.io.InputStreamReader(process.errorStream))
+                    var line: String?
+                    while (errReader.readLine().also { line = it } != null) {
+                        errBuilder.append(line).append("\n")
+                    }
+                } catch (ignored: Exception) {}
+            }
+            errThread.start()
+
+            val exitCode = process.waitFor()
+            errThread.join(2000)
+
+            if (exitCode != 0) {
+                lastError = errBuilder.toString().trim()
+                if (lastError.isEmpty()) {
+                    lastError = "Command exited with code $exitCode"
+                }
+                android.util.Log.e("RenameUtil", "Command failed ($exitCode): $command\nError: $lastError")
+                false
+            } else {
+                lastError = ""
+                true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            lastError = e.message ?: "Unknown exception"
+            false
+        }
+    }
+
+    fun executeShizukuScriptAsync(script: String, onProgress: (String) -> Unit, onComplete: (Boolean) -> Unit) {
+        if (!shizukuAvailable()) {
+            onProgress("STATUS:Shizuku not available")
+            onComplete(false)
+            return
+        }
+        Thread {
+            try {
+                val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                    "newProcess",
+                    Array<String>::class.java,
+                    Array<String>::class.java,
+                    String::class.java
+                ).apply {
+                    isAccessible = true
+                }
+                val process = newProcessMethod.invoke(
+                    null,
+                    arrayOf("sh", "-c", script),
+                    null,
+                    null
+                ) as rikka.shizuku.ShizukuRemoteProcess
+                
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
+                val errReader = java.io.BufferedReader(java.io.InputStreamReader(process.errorStream))
+                
+                val errThread = Thread {
+                    var line: String?
+                    while (errReader.readLine().also { line = it } != null) {
+                        onProgress(line!!)
+                    }
+                }
+                errThread.start()
+                
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    onProgress(line!!)
+                }
+                
+                process.waitFor()
+                errThread.join()
+                onComplete(process.exitValue() == 0)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onProgress("STATUS:Error: ${e.message}")
+                onComplete(false)
+            }
+        }.start()
+    }
+
+    fun executeShizukuCommandWithOutput(command: String): String {
+        if (!shizukuAvailable()) {
+            return "Shizuku not available"
+        }
+        return try {
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            ).apply {
+                isAccessible = true
+            }
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("sh", "-c", command),
+                null,
+                null
+            ) as rikka.shizuku.ShizukuRemoteProcess
+            
+            val output = StringBuilder()
+            val errOutput = StringBuilder()
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
+            val errReader = java.io.BufferedReader(java.io.InputStreamReader(process.errorStream))
+
+            val errThread = Thread {
+                try {
+                    var line: String?
+                    while (errReader.readLine().also { line = it } != null) {
+                        errOutput.append(line).append("\n")
+                    }
+                } catch (ignored: Exception) {}
+            }
+            errThread.start()
+
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                output.append(line).append("\n")
+            }
+
+            process.waitFor()
+            errThread.join(2000)
+            if (output.isNotEmpty()) output.toString() else errOutput.toString()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "Error: ${e.message}"
+        }
+    }
+
+
+    fun checkDirExists(path: String): Boolean {
+        if (!useShizukuOps || !shizukuAvailable()) {
+            return File(path).isDirectory
+        }
+        return try {
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            ).apply {
+                isAccessible = true
+            }
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("sh", "-c", "[ -d \"$path\" ]"),
+                null,
+                null
+            ) as rikka.shizuku.ShizukuRemoteProcess
+            process.waitFor() == 0
+        } catch (e: Exception) {
+            File(path).exists()
+        }
+    }
+
+    fun checkFileExists(path: String): Boolean {
+        if (!useShizukuOps || !shizukuAvailable()) {
+            return File(path).isFile
+        }
+        return try {
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            ).apply {
+                isAccessible = true
+            }
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("sh", "-c", "[ -f \"$path\" ]"),
+                null,
+                null
+            ) as rikka.shizuku.ShizukuRemoteProcess
+            process.waitFor() == 0
+        } catch (e: Exception) {
+            File(path).exists()
+        }
+    }
+
+    var appContext: android.content.Context? = null
 
     fun isModOn(): Boolean {
         val ctx = appContext ?: return false
         return PanelFileManager.isModOn(ctx)
     }
 
-    fun turnOn(context: Context? = null): Boolean {
+    fun turnOn(context: android.content.Context? = null): Boolean {
         val ctx = context ?: appContext
         if (ctx != null) {
-            val (success, log) = PanelFileManager.applyTurnOn(ctx)
-            lastError = if (success) "" else log
-            return success
+            val result = PanelFileManager.applyTurnOn(ctx)
+            lastError = if (result.first) "" else result.second
+            return result.first
         }
         lastError = "Application context not available"
         return false
     }
 
-    fun turnOff(context: Context? = null): String {
+    fun turnOff(context: android.content.Context? = null): String {
         val ctx = context ?: appContext
         if (ctx != null) {
-            val (success, log) = PanelFileManager.applyTurnOff(ctx)
-            lastError = if (success) "" else log
-            return if (success) {
-                "SUCCESS"
-            } else {
-                if (log.contains("not exist", ignoreCase = true)) "DIR_NOT_FOUND" else "ERROR"
-            }
+            val result = PanelFileManager.applyTurnOff(ctx)
+            lastError = if (result.first) "" else result.second
+            return if (result.first) "SUCCESS" else if (result.second.contains("not exist", ignoreCase = true)) "DIR_NOT_FOUND" else "ERROR"
         }
         lastError = "Application context not available"
         return "ERROR"
     }
 
-    fun executeShizukuCommand(cmd: String): Boolean {
-        return try {
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as ShizukuRemoteProcess
-            val errReader = BufferedReader(InputStreamReader(process.errorStream))
-            val err = errReader.readText().trim()
-            val code = process.waitFor()
-            if (code != 0) {
-                lastError = err.ifEmpty { "Command failed (exit code $code)" }
-                false
-            } else {
-                lastError = ""
-                true
-            }
-        } catch (e: Exception) {
-            lastError = e.message ?: "Shizuku exec failed"
-            false
-        }
-    }
-
-    fun copyFileWithShizuku(src: File, destPath: String): Boolean {
-        if (!src.exists() || !src.isFile) {
-            lastError = "Source file ${src.absolutePath} not found"
-            return false
-        }
-        val destFile = File(destPath)
-        val destDir = destFile.parent ?: "/storage/emulated/0"
-
-        // 1. Ensure target directory exists via Shizuku shell
-        executeShizukuCommand("mkdir -p '$destDir'")
-
-        // 2. Stream file content from app to Shizuku stdin using `cat > destPath`
-        return try {
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val process = method.invoke(null, arrayOf("sh", "-c", "cat > '$destPath'"), null, null) as ShizukuRemoteProcess
-
-            FileInputStream(src).use { input ->
-                process.outputStream.use { output ->
-                    input.copyTo(output)
-                    output.flush()
+    fun copyDirectory(source: File, target: File): Boolean {
+        val srcPath = source.absolutePath
+        val destPath = target.absolutePath
+        if (useShizukuOps && shizukuAvailable()) {
+            val cmd = """
+                rm -rf "$destPath" 2>/dev/null
+                mkdir -p "$destPath"
+                if ! cp -pr "$srcPath/." "$destPath/"; then
+                    cp -r "$srcPath/." "$destPath/"
+                fi
+            """.trimIndent()
+            return executeShizukuCommand(cmd)
+        } else {
+            // fallback (will likely fail on Android 11+ but keeps compilation and structure)
+            if (!target.exists()) target.mkdirs()
+            source.listFiles()?.forEach { file ->
+                val dest = File(target, file.name)
+                if (file.isDirectory) {
+                    copyDirectory(file, dest)
+                } else {
+                    file.copyTo(dest, overwrite = true)
                 }
             }
-
-            val errReader = BufferedReader(InputStreamReader(process.errorStream))
-            val errOutput = errReader.readText().trim()
-            val code = process.waitFor()
-            if (code == 0) {
-                executeShizukuCommand("chmod 666 '$destPath'")
-                lastError = ""
-                true
-            } else {
-                lastError = errOutput.ifEmpty { "Exit code $code writing to $destPath" }
-                false
-            }
-        } catch (e: Exception) {
-            lastError = e.message ?: "Streaming to Shizuku failed"
-            false
+            return target.exists()
         }
     }
 
-    fun executeShizukuCommandWithOutput(cmd: String): String {
-        return try {
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as ShizukuRemoteProcess
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val sb = java.lang.StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                sb.append(line).append("\n")
-            }
-            reader.close()
-            process.waitFor()
-            sb.toString().trim()
-        } catch (e: Exception) {
-            lastError = e.message ?: "Shizuku exec failed"
-            ""
-        }
-    }
-
-    fun checkDirExists(path: String): Boolean {
+    fun extractZipToDirectoryMerge(zipFile: File, targetDir: File) {
+        val zipPath = zipFile.absolutePath
+        val destPath = targetDir.absolutePath
         if (useShizukuOps && shizukuAvailable()) {
-            val res = executeShizukuCommandWithOutput("[ -d '$path' ] && echo 'EXISTS'")
-            return res.contains("EXISTS")
+            val cmd = "unzip -o \"$zipPath\" -d \"$destPath\""
+            executeShizukuCommand(cmd)
+        } else {
+            // fallback (will likely fail on Android 11+ but fallback exists)
+            java.util.zip.ZipInputStream(java.io.FileInputStream(zipFile)).use { zis ->
+                var entry: java.util.zip.ZipEntry? = zis.nextEntry
+                while (entry != null) {
+                    val entryFile = File(targetDir, entry.name)
+                    if (entry.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        java.io.FileOutputStream(entryFile).use { fos ->
+                            zis.copyTo(fos)
+                        }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
         }
-        val f = File(path)
-        return f.exists() && f.isDirectory
-    }
-
-    fun checkFileExists(path: String): Boolean {
-        if (useShizukuOps && shizukuAvailable()) {
-            val res = executeShizukuCommandWithOutput("[ -f '$path' ] && echo 'EXISTS'")
-            return res.contains("EXISTS")
-        }
-        val f = File(path)
-        return f.exists() && f.isFile
     }
 
     fun getGameUIDs(): List<String> {
         val uids = mutableListOf<String>()
-        val paths = listOf(
+        val dirs = listOf(
             "/storage/emulated/0/Android/data/com.dts.freefiremax/files/Workshop",
             "/storage/emulated/0/Android/data/com.dts.freefireth/files/Workshop"
         )
         if (useShizukuOps && shizukuAvailable()) {
-            for (p in paths) {
-                val out = executeShizukuCommandWithOutput("ls '$p' 2>/dev/null")
-                for (item in out.lines()) {
-                    val trimmed = item.trim()
-                    if (trimmed.isNotEmpty() && trimmed.all { it.isDigit() }) {
-                        uids.add(trimmed)
+            for (dir in dirs) {
+                val output = executeShizukuCommandWithOutput("ls '$dir' 2>/dev/null")
+                val lines = output.split("\n")
+                for (line in lines) {
+                    val name = line.trim()
+                    if (name.isNotEmpty() && name.all { it.isDigit() }) {
+                        uids.add(name)
                     }
                 }
             }
         } else {
-            for (p in paths) {
-                val files = File(p).listFiles() ?: continue
-                for (f in files) {
-                    if (f.isDirectory && f.name.all { it.isDigit() }) {
-                        uids.add(f.name)
+            for (dir in dirs) {
+                File(dir).listFiles()?.forEach { file ->
+                    if (file.isDirectory && file.name.all { it.isDigit() }) {
+                        uids.add(file.name)
                     }
                 }
             }
@@ -204,31 +333,20 @@ object RenameUtil {
         return uids.distinct()
     }
 
-    fun installNewScript(
-        zipFile: File,
-        onProgress: (String) -> Unit,
-        onComplete: (Boolean) -> Unit
-    ) {
+    fun installNewScript(zipFile: File, onProgress: (String) -> Unit, onComplete: (Boolean) -> Unit) {
         val destDir = File("/storage/emulated/0/Android/data")
         val optionalDir = File("/storage/emulated/0/Android/data/com.dts.freefiremax/files/contentcache/Optional")
         val aDir = File(optionalDir, "android")
         val aData = File(optionalDir, "android-data")
 
         if (useShizukuOps && shizukuAvailable()) {
-            val zipPath = zipFile.absolutePath
-            val destPath = destDir.absolutePath
-            val optPath = optionalDir.absolutePath
-            val aDirPath = aDir.absolutePath
-            val aDataPath = aData.absolutePath
-            val fileName = zipFile.name
-
             val script = """
                 #!/system/bin/sh
-                ZIP_FILE="$zipPath"
-                DEST_DIR="$destPath"
-                OPTIONAL_DIR="$optPath"
-                A_DIR="$aDirPath"
-                A_DATA="$aDataPath"
+                ZIP_FILE="${zipFile.absolutePath}"
+                DEST_DIR="${destDir.absolutePath}"
+                OPTIONAL_DIR="${optionalDir.absolutePath}"
+                A_DIR="${aDir.absolutePath}"
+                A_DATA="${aData.absolutePath}"
                 
                 if [ ! -f "${'$'}ZIP_FILE" ]; then
                     echo "STATUS:Error: Zip file not found" >&2
@@ -242,7 +360,7 @@ object RenameUtil {
                     fi
                 fi
                 
-                echo "STATUS:Extracting $fileName..."
+                echo "STATUS:Extracting ${zipFile.name}..."
                 if unzip -o -q "${'$'}ZIP_FILE" -d "${'$'}DEST_DIR" ; then
                     mv "${'$'}ZIP_FILE" "/storage/emulated/0/Download/xcel1-used-delete-it.zip"
                     echo "STATUS:Done!"
@@ -251,76 +369,29 @@ object RenameUtil {
                     exit 1
                 fi
             """.trimIndent()
-
             executeShizukuScriptAsync(script, onProgress, onComplete)
         } else {
             Thread {
                 try {
-                    onProgress("Copying backup...")
-                    if (!aData.exists()) {
-                        aDir.copyRecursively(aData, overwrite = true)
+                    if (!zipFile.exists()) {
+                        onProgress("STATUS:Error: Zip file not found")
+                        onComplete(false)
+                        return@Thread
                     }
-                    onProgress("Extracting files...")
-                    unzip(zipFile, destDir)
-                    zipFile.delete()
+                    onProgress("STATUS:Copying android backup...")
+                    if (!aData.exists()) {
+                        copyDirectory(aDir, aData)
+                    }
+                    onProgress("STATUS:Extracting ${zipFile.name}...")
+                    extractZipToDirectoryMerge(zipFile, destDir)
+                    zipFile.renameTo(File("/storage/emulated/0/Download/xcel1-used-delete-it.zip"))
+                    onProgress("STATUS:Done!")
                     onComplete(true)
                 } catch (e: Exception) {
-                    lastError = e.message ?: "Install failed"
+                    onProgress("STATUS:Error: ${e.message}")
                     onComplete(false)
                 }
             }.start()
-        }
-    }
-
-    private fun executeShizukuScriptAsync(
-        script: String,
-        onProgress: (String) -> Unit,
-        onComplete: (Boolean) -> Unit
-    ) {
-        Thread {
-            try {
-                val method = Shizuku::class.java.getDeclaredMethod(
-                    "newProcess",
-                    Array<String>::class.java,
-                    Array<String>::class.java,
-                    String::class.java
-                )
-                method.isAccessible = true
-                val process = method.invoke(null, arrayOf("sh", "-c", script), null, null) as ShizukuRemoteProcess
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    val l = line?.trim() ?: ""
-                    if (l.startsWith("STATUS:")) {
-                        onProgress(l.removePrefix("STATUS:"))
-                    }
-                }
-                reader.close()
-                val code = process.waitFor()
-                onComplete(code == 0)
-            } catch (e: Exception) {
-                lastError = e.message ?: "Script execution error"
-                onComplete(false)
-            }
-        }.start()
-    }
-
-    private fun unzip(zipFile: File, targetDir: File) {
-        ZipInputStream(FileInputStream(zipFile)).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val newFile = File(targetDir, entry.name)
-                if (entry.isDirectory) {
-                    newFile.mkdirs()
-                } else {
-                    newFile.parentFile?.mkdirs()
-                    FileOutputStream(newFile).use { fos ->
-                        zis.copyTo(fos)
-                    }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
         }
     }
 }

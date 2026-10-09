@@ -14,28 +14,25 @@ import com.example.R
 class AboutFragment : Fragment() {
 
     override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_about, container, false)
-        val videoView = view.findViewById<VideoView?>(R.id.video_view)
-        if (videoView != null) {
-            try {
-                val pkg = requireActivity().packageName
-                val uri = Uri.parse("android.resource://$pkg/${R.raw.video}")
-                videoView.setVideoURI(uri)
-                val mediaController = MediaController(requireContext())
-                mediaController.setAnchorView(videoView)
-                videoView.setMediaController(mediaController)
-                videoView.setOnPreparedListener { mp ->
-                    mp.isLooping = true
-                }
-                videoView.start()
-            } catch (e: Exception) {
-                e.printStackTrace()
+
+        val videoView = view.findViewById<VideoView>(R.id.video_view)
+        val videoPath = "android.resource://${requireActivity().packageName}/${R.raw.video}"
+        videoView.setVideoURI(Uri.parse(videoPath))
+
+        val mediaController = MediaController(requireContext())
+        mediaController.setAnchorView(videoView)
+        videoView.setMediaController(mediaController)
+
+        videoView.setOnPreparedListener { mp: MediaPlayer ->
+            mp.setOnVideoSizeChangedListener { _, _, _ ->
+                // Adjust layout if needed
             }
         }
+        videoView.start()
+
         return view
     }
 }
