@@ -796,22 +796,6 @@ class MainActivity : AppCompatActivity() {
         scriptListenerRegistration = FirebaseFirestore.getInstance().collection("users").document(savedKey).addSnapshotListener { snapshot, e ->
             if (e != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
 
-            val isActive = snapshot.getBoolean("isActive") ?: false
-            val expireTime = snapshot.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
-            if (!isActive || System.currentTimeMillis() > expireTime) {
-                keyReady = false
-                prefs.edit().remove(KEY_SAVED_KEY).remove(KEY_USER_TYPE).apply()
-                executeExpirationTurnOff {
-                    Toast.makeText(this@MainActivity, "Key deactivated or expired. Switched to OFF state.", Toast.LENGTH_LONG).show()
-                    showKeyDialog {
-                        keyReady = true
-                        setupNormalUI()
-                        checkTelegramModal()
-                    }
-                }
-                return@addSnapshotListener
-            }
-
             val messagesList = snapshot.get("messages") as? List<Map<String, Any>> ?: emptyList()
             val lastSender = messagesList.lastOrNull()?.get("sender") as? String ?: "USER"
             val messageSeen = snapshot.getBoolean("messageSeen") ?: (lastSender == "USER")
@@ -838,10 +822,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
+        val manager = getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        for (service in manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.name == service.service.className) {
+                return true
+            }
+        }
+        return false
+    }
+
     private fun executeExpirationTurnOff(onComplete: () -> Unit) {
         Thread {
             RenameUtil.turnOff(this@MainActivity)
-            PanelFileManager.setModState(this@MainActivity, "OFF")
             runOnUiThread {
                 AlarmReceiver.cancelAlarm(this@MainActivity)
                 prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
@@ -894,6 +887,9 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val success = RenameUtil.turnOn(this)
             runOnUiThread {
+                if (success) {
+                    scheduleAutoOffAlarm()
+                }
                 onComplete?.invoke(success)
             }
         }.start()
@@ -902,7 +898,6 @@ class MainActivity : AppCompatActivity() {
     fun executeTurnOffGlobal(onComplete: ((String) -> Unit)? = null) {
         Thread {
             val result = RenameUtil.turnOff(this)
-            PanelFileManager.setModState(this, "OFF")
             runOnUiThread {
                 AlarmReceiver.cancelAlarm(this)
                 prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
@@ -911,14 +906,23 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    private fun scheduleAutoOffAlarm() {
+        val triggerTime = System.currentTimeMillis() + 4 * 60 * 60 * 1000
+        prefs.edit().putLong(KEY_AUTO_OFF_TIME, triggerTime).apply()
+        AlarmReceiver.scheduleAlarm(this, triggerTime)
+    }
+
     fun forceTurnOffIfNeeded(callback: () -> Unit) {
         Thread {
-            RenameUtil.turnOff(this)
-            PanelFileManager.setModState(this, "OFF")
-            runOnUiThread {
-                AlarmReceiver.cancelAlarm(this)
-                prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
-                callback()
+            if (RenameUtil.isModOn()) {
+                RenameUtil.turnOff(this)
+                runOnUiThread {
+                    AlarmReceiver.cancelAlarm(this)
+                    prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+                    callback()
+                }
+            } else {
+                runOnUiThread(callback)
             }
         }.start()
     }

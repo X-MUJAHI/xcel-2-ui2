@@ -69,6 +69,6 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 
-    // AdMob
-    implementation(libs.play.services.ads)
+    // AdMob (unused in old features)
+    // implementation(libs.play.services.ads)
 }

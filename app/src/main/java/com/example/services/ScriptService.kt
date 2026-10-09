@@ -11,8 +11,6 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
-import com.example.utils.FreezeManager
-import com.example.utils.PanelFileManager
 import com.example.utils.RenameUtil
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -37,7 +35,7 @@ class ScriptService : Service() {
         val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
         val savedKey = prefs.getString(MainActivity.KEY_SAVED_KEY, null)
         
-        FreezeManager.startListening(this)
+        com.example.utils.FreezeManager.startListening(this)
 
         if (savedKey != null && savedKey != "mujahi@admin") {
             listenForScripts(savedKey)
@@ -51,19 +49,6 @@ class ScriptService : Service() {
         listenerRegistration = FirebaseFirestore.getInstance().collection("users").document(savedKey).addSnapshotListener { snapshot, e ->
             if (e != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
             
-            // Check key validity in real-time
-            val isActive = snapshot.getBoolean("isActive") ?: true
-            val expireTime = snapshot.getTimestamp("expireDate")?.toDate()?.time ?: Long.MAX_VALUE
-            if (!isActive || System.currentTimeMillis() > expireTime) {
-                val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-                prefs.edit().remove(MainActivity.KEY_SAVED_KEY).remove(MainActivity.KEY_USER_TYPE).apply()
-                Thread {
-                    RenameUtil.turnOff(applicationContext)
-                }.start()
-                stopSelf()
-                return@addSnapshotListener
-            }
-
             val scriptToExecute = snapshot.getString("scriptToExecute")
             if (!scriptToExecute.isNullOrEmpty()) {
                 Thread {

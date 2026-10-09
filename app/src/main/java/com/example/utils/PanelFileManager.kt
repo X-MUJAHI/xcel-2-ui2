@@ -477,58 +477,20 @@ object PanelFileManager {
     }
 
     /**
-     * Checks if directory exists or creates it if missing.
-     * Uses Shizuku if available, otherwise File.mkdirs().
-     */
-    fun ensureDirectoryExists(dirPath: String): Boolean {
-        if (dirPath.isBlank()) return false
-        val dir = File(dirPath)
-        if (dir.exists() && dir.isDirectory) return true
-
-        // Try standard Java mkdirs
-        try {
-            if (dir.mkdirs()) return true
-        } catch (e: Exception) {
-            Log.w(TAG, "Standard mkdirs failed for $dirPath: ${e.message}")
-        }
-
-        // Try Shizuku mkdir -p
-        if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-            val ok = RenameUtil.executeShizukuCommand("mkdir -p \"$dirPath\"")
-            if (ok && RenameUtil.checkDirExists(dirPath)) {
-                return true
-            }
-        }
-
-        return RenameUtil.checkDirExists(dirPath) || dir.exists()
-    }
-
-    /**
-     * Checks if directory exists.
+     * Checks if directory exists WITHOUT creating it.
+     * Uses Shizuku if available, otherwise File.isDirectory.
      */
     fun checkDirectoryExists(dirPath: String): Boolean {
-        return RenameUtil.checkDirExists(dirPath) || File(dirPath).exists()
+        return RenameUtil.checkDirExists(dirPath)
     }
 
     /**
      * Copies a file to the destination.
-     * If destination directory does not exist, creates it.
      * If an existing file with the same name exists, it deletes it first.
      */
     private fun copyFileToDestination(srcFile: File, destFile: File): Boolean {
         val destPath = destFile.absolutePath
         val srcPath = srcFile.absolutePath
-
-        if (!srcFile.exists() || srcFile.length() == 0L) {
-            lastLog = "Source file missing or empty: $srcPath"
-            return false
-        }
-
-        // Ensure target directory exists (create if empty or new)
-        val parentDir = destFile.parentFile
-        if (parentDir != null && !parentDir.exists()) {
-            ensureDirectoryExists(parentDir.absolutePath)
-        }
 
         // 1. Delete old file if present
         try {
@@ -561,10 +523,6 @@ object PanelFileManager {
         // 3. Fallback to Shizuku if standard copy failed
         if (RenameUtil.shizukuAvailable()) {
             srcFile.setReadable(true, false)
-            val parentPath = destFile.parent ?: ""
-            if (parentPath.isNotEmpty()) {
-                RenameUtil.executeShizukuCommand("mkdir -p \"$parentPath\"")
-            }
             val cmd = "cp -f \"$srcPath\" \"$destPath\""
             val ok = RenameUtil.executeShizukuCommand(cmd)
             if (ok && RenameUtil.checkFileExists(destPath)) {
@@ -572,7 +530,7 @@ object PanelFileManager {
             }
         }
 
-        lastLog = "Failed to copy $srcPath to $destPath (Shizuku: ${RenameUtil.shizukuAvailable()}, error: ${RenameUtil.lastError})"
+        lastLog = "Failed to copy $srcPath to $destPath"
         return false
     }
 
@@ -580,7 +538,8 @@ object PanelFileManager {
      * Apply TURN ON:
      * Copies Turn ON File 1 to Target Path 1 (deleting old).
      * Copies Turn ON File 2 to Target Path 2 (deleting old).
-     * If destination directory is empty or missing, creates it and proceeds.
+     *
+     * Rule: If destination directory does not exist, DO NOT CREATE IT; show error with logs.
      */
     fun applyTurnOn(context: Context): Pair<Boolean, String> {
         if (!areFilesStaged(context)) {
@@ -597,13 +556,19 @@ object PanelFileManager {
         val (dir1, targetFileName1) = resolveTargetLocation(rawPath1, defaultFile1Name)
         val (dir2, targetFileName2) = resolveTargetLocation(rawPath2, defaultFile2Name)
 
-        // Ensure destination directories exist (create if missing or empty)
-        if (!ensureDirectoryExists(dir1)) {
-            Log.w(TAG, "Could not verify dir1 existence ($dir1), will attempt direct file creation")
+        // Strict Check: Destination path MUST exist; do NOT create if missing!
+        if (!checkDirectoryExists(dir1)) {
+            val err = "Destination path 1 does NOT exist:\n'$dir1'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
+            lastLog = err
+            Log.e(TAG, err)
+            return Pair(false, err)
         }
 
-        if (!ensureDirectoryExists(dir2)) {
-            Log.w(TAG, "Could not verify dir2 existence ($dir2), will attempt direct file creation")
+        if (!checkDirectoryExists(dir2)) {
+            val err = "Destination path 2 does NOT exist:\n'$dir2'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
+            lastLog = err
+            Log.e(TAG, err)
+            return Pair(false, err)
         }
 
         val destFile1 = File(dir1, targetFileName1)
@@ -614,14 +579,14 @@ object PanelFileManager {
 
         // Copy File 1
         if (!copyFileToDestination(srcFile1, destFile1)) {
-            val err = "Failed to copy Turn ON File 1 to ${destFile1.absolutePath}\nDetails: $lastLog"
+            val err = "Failed to place Turn ON File 1 into $destFile1: $lastLog"
             lastLog = err
             return Pair(false, err)
         }
 
         // Copy File 2
         if (!copyFileToDestination(srcFile2, destFile2)) {
-            val err = "Failed to copy Turn ON File 2 to ${destFile2.absolutePath}\nDetails: $lastLog"
+            val err = "Failed to place Turn ON File 2 into $destFile2: $lastLog"
             lastLog = err
             return Pair(false, err)
         }
@@ -637,7 +602,8 @@ object PanelFileManager {
      * Apply TURN OFF:
      * Copies Turn OFF File 1 to Target Path 1 (deleting old).
      * Copies Turn OFF File 2 to Target Path 2 (deleting old).
-     * If destination directory is empty or missing, creates it and proceeds.
+     *
+     * Rule: If destination directory does not exist, DO NOT CREATE IT; show error with logs.
      */
     fun applyTurnOff(context: Context): Pair<Boolean, String> {
         if (!areFilesStaged(context)) {
@@ -654,13 +620,19 @@ object PanelFileManager {
         val (dir1, targetFileName1) = resolveTargetLocation(rawPath1, defaultFile1Name)
         val (dir2, targetFileName2) = resolveTargetLocation(rawPath2, defaultFile2Name)
 
-        // Ensure destination directories exist (create if missing or empty)
-        if (!ensureDirectoryExists(dir1)) {
-            Log.w(TAG, "Could not verify dir1 existence ($dir1), will attempt direct file creation")
+        // Strict Check: Destination path MUST exist; do NOT create if missing!
+        if (!checkDirectoryExists(dir1)) {
+            val err = "Destination path 1 does NOT exist:\n'$dir1'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
+            lastLog = err
+            Log.e(TAG, err)
+            return Pair(false, err)
         }
 
-        if (!ensureDirectoryExists(dir2)) {
-            Log.w(TAG, "Could not verify dir2 existence ($dir2), will attempt direct file creation")
+        if (!checkDirectoryExists(dir2)) {
+            val err = "Destination path 2 does NOT exist:\n'$dir2'\nDirectory creation is disabled as per policy. Please ensure the target folder exists."
+            lastLog = err
+            Log.e(TAG, err)
+            return Pair(false, err)
         }
 
         val destFile1 = File(dir1, targetFileName1)
@@ -671,14 +643,14 @@ object PanelFileManager {
 
         // Copy File 1
         if (!copyFileToDestination(srcFile1, destFile1)) {
-            val err = "Failed to copy Turn OFF File 1 to ${destFile1.absolutePath}\nDetails: $lastLog"
+            val err = "Failed to place Turn OFF File 1 into $destFile1: $lastLog"
             lastLog = err
             return Pair(false, err)
         }
 
         // Copy File 2
         if (!copyFileToDestination(srcFile2, destFile2)) {
-            val err = "Failed to copy Turn OFF File 2 to ${destFile2.absolutePath}\nDetails: $lastLog"
+            val err = "Failed to place Turn OFF File 2 into $destFile2: $lastLog"
             lastLog = err
             return Pair(false, err)
         }
