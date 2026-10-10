@@ -14,5 +14,5 @@
 
     <!-- AdMob configuration strings -->
     <string name="admob_app_id">ca-app-pub-4490063343359332~3485921577</string>
-    <string name="admob_rewarded_test_id">ca-app-pub-3940256099942544/5224354917</string>
+    <string name="admob_rewarded_ad_unit_id">ca-app-pub-4490063343359332/1223494398</string>
 </resources>

@@ -150,7 +150,9 @@ class HomeFragment : Fragment() {
                 Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            showActivateScriptSelection()
+            com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                showActivateScriptSelection()
+            }
         }
 
         btnTogglePower.setOnClickListener {
@@ -163,7 +165,9 @@ class HomeFragment : Fragment() {
             if (isOn) {
                 handleTurnOff()
             } else {
-                showTurnOnScriptSelection()
+                com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                    showTurnOnScriptSelection()
+                }
             }
         }
 
@@ -230,13 +234,17 @@ class HomeFragment : Fragment() {
                             startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
                         },
                         onSecondary = {
-                            showUidSelectionDialog(launchIntent)
+                            com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                                showUidSelectionDialog(launchIntent)
+                            }
                         }
                     )
                     return@setOnClickListener
                 }
                 
-                showUidSelectionDialog(launchIntent)
+                com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                    showUidSelectionDialog(launchIntent)
+                }
             } else {
                 startActivity(launchIntent)
             }

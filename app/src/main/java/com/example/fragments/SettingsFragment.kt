@@ -151,7 +151,9 @@ class SettingsFragment : Fragment() {
                 Toast.makeText(context, "Please configure/authorize Shizuku first!", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            processNewScript()
+            com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                processNewScript()
+            }
         }
 
         view.findViewById<Button>(R.id.btn_shizuku_perm).setOnClickListener {
