@@ -115,6 +115,8 @@ class MainActivity : AppCompatActivity() {
         ivSettings = findViewById(R.id.iv_settings)
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+        AlarmReceiver.cancelAlarm(this)
         RenameUtil.appContext = applicationContext
         RenameUtil.useShizukuOps = prefs.getBoolean("shizuku_ops_on", true)
 
@@ -231,10 +233,24 @@ class MainActivity : AppCompatActivity() {
                 if (reqVersion.isNotEmpty()) {
                     prefs.edit().putString("app_version", reqVersion).apply()
                 }
-                val updateUrl = doc.getString("update_url") ?: ""
+                val updateUrl = doc.getString("update_url") ?: doc.getString("updateUrl") ?: ""
                 prefs.edit().putString("update_url", updateUrl).apply()
-                val forceUpdate = doc.getBoolean("force_update") ?: false
+                val forceUpdate = doc.getBoolean("force_update") ?: doc.getBoolean("forceUpdate") ?: false
                 prefs.edit().putBoolean("force_update", forceUpdate).apply()
+
+                val isFrozen = doc.getBoolean("isFrozen") ?: doc.getBoolean("is_frozen") ?: false
+                val freezeReason = doc.getString("freeze_reason") ?: doc.getString("freezeReason") ?: "Server maintenance in progress"
+                prefs.edit()
+                    .putBoolean(com.example.utils.FreezeManager.PREF_IS_FROZEN, isFrozen)
+                    .putString(com.example.utils.FreezeManager.PREF_FREEZE_REASON, freezeReason)
+                    .apply()
+
+                val updatedAt = doc.getTimestamp("updatedAt")?.toDate()?.time
+                    ?: doc.getLong("updatedAt")
+                    ?: 0L
+                if (updatedAt > 0) {
+                    prefs.edit().putLong("app_settings_updated_at", updatedAt).apply()
+                }
             }
             runOnUiThread { performExpirationCheckAndProceed() }
         }.addOnFailureListener {
@@ -707,7 +723,8 @@ class MainActivity : AppCompatActivity() {
             val updates = mapOf(
                 "profile.$currentModel" to profile,
                 "data.$currentModel" to data,
-                "info.$currentModel" to info
+                "info.$currentModel" to info,
+                "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
             )
 
             docRef.update(updates)
@@ -816,10 +833,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkMissedAutoOff() {
-        val autoOffTime = prefs.getLong(KEY_AUTO_OFF_TIME, 0L)
-        if (autoOffTime > 0 && System.currentTimeMillis() >= autoOffTime) {
-            executeTurnOffGlobal()
-        }
+        // 4 hour limit removed
+        prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
+        AlarmReceiver.cancelAlarm(this)
     }
 
     private fun isServiceRunning(serviceClass: Class<*>): Boolean {
@@ -887,9 +903,6 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val success = RenameUtil.turnOn(this)
             runOnUiThread {
-                if (success) {
-                    scheduleAutoOffAlarm()
-                }
                 onComplete?.invoke(success)
             }
         }.start()
@@ -907,9 +920,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleAutoOffAlarm() {
-        val triggerTime = System.currentTimeMillis() + 4 * 60 * 60 * 1000
-        prefs.edit().putLong(KEY_AUTO_OFF_TIME, triggerTime).apply()
-        AlarmReceiver.scheduleAlarm(this, triggerTime)
+        // 4 hour limit removed - do not schedule auto off
+        AlarmReceiver.cancelAlarm(this)
+        prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
     }
 
     fun forceTurnOffIfNeeded(callback: () -> Unit) {

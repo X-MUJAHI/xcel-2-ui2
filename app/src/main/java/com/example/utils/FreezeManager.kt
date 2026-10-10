@@ -66,8 +66,27 @@ object FreezeManager {
                         return@addSnapshotListener
                     }
 
-                    val isFrozen = snapshot.getBoolean("isFrozen") ?: false
-                    val reason = snapshot.getString("freezeReason") ?: "Server maintenance in progress"
+                    val isFrozen = snapshot.getBoolean("isFrozen") 
+                        ?: snapshot.getBoolean("is_frozen") 
+                        ?: false
+                    val reason = snapshot.getString("freeze_reason") 
+                        ?: snapshot.getString("freezeReason") 
+                        ?: snapshot.getString("freeze_msg") 
+                        ?: "Server maintenance in progress"
+
+                    val updateUrl = snapshot.getString("update_url") ?: snapshot.getString("updateUrl")
+                    if (!updateUrl.isNullOrEmpty()) {
+                        prefs.edit().putString("update_url", updateUrl).apply()
+                    }
+                    val forceUpdate = snapshot.getBoolean("force_update") ?: snapshot.getBoolean("forceUpdate")
+                    if (forceUpdate != null) {
+                        prefs.edit().putBoolean("force_update", forceUpdate).apply()
+                    }
+                    val updatedAt = snapshot.getTimestamp("updatedAt")?.toDate()?.time
+                        ?: snapshot.getLong("updatedAt")
+                    if (updatedAt != null && updatedAt > 0) {
+                        prefs.edit().putLong("app_settings_updated_at", updatedAt).apply()
+                    }
 
                     handleFreezeState(appContext, prefs, isFrozen, reason)
                 }

@@ -146,7 +146,10 @@ class ProfileFragment : Fragment() {
                         return@addOnSuccessListener
                     }
                     devices.add(androidId)
-                    doc.reference.update("devices", devices)
+                    doc.reference.update(
+                        "devices", devices,
+                        "updatedAt", com.google.firebase.firestore.FieldValue.serverTimestamp()
+                    )
                 }
 
                 val userType = doc.getString("role") ?: "NORMAL"

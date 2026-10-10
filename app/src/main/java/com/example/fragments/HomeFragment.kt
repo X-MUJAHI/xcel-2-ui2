@@ -397,7 +397,10 @@ class HomeFragment : Fragment() {
                 if (!isAdded) return@runOnUiThread
                 progressBar.visibility = View.GONE
                 if (uids.isEmpty()) {
-                    tvNoUids.visibility = View.VISIBLE
+                    if (dialog.isShowing) {
+                        dialog.dismiss()
+                    }
+                    startActivity(launchIntent)
                 } else {
                     listView.visibility = View.VISIBLE
                     val adapter = android.widget.ArrayAdapter(requireContext(), R.layout.item_uid, android.R.id.text1, uids)
