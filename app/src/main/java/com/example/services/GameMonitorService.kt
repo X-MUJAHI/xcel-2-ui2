@@ -25,7 +25,7 @@ class GameMonitorService : Service() {
     private var lastQueryTime = System.currentTimeMillis() - 1000 * 60 * 60 * 2 // 2 hours ago
     private var currentForegroundPkg: String? = null
     private var lastSeenForegroundTime = System.currentTimeMillis()
-    private val GRACE_PERIOD_MS = 3 * 60 * 1000L // 3 minutes
+    private val INACTIVITY_THRESHOLD_MS = 20 * 60 * 1000L // 20 minutes
 
     override fun onCreate() {
         super.onCreate()
@@ -37,10 +37,10 @@ class GameMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lastSeenForegroundTime = System.currentTimeMillis() // Reset grace period on every start request
+        lastSeenForegroundTime = System.currentTimeMillis() 
         val notification = NotificationCompat.Builder(this, "monitor_channel")
             .setContentTitle("xcel2 is working")
-            .setContentText("Hologram ability is active while you play")
+            .setContentText("Mod is active while you play")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
         startForeground(2001, notification)
@@ -62,11 +62,17 @@ class GameMonitorService : Service() {
                 
                 if (isForeground) {
                     lastSeenForegroundTime = System.currentTimeMillis()
+                    // Track active time
+                    val prefs = getSharedPreferences(com.example.MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                    val activeTime = prefs.getLong("game_active_time_ms", 0L)
+                    prefs.edit().putLong("game_active_time_ms", activeTime + checkInterval).apply()
                 }
 
-                if (!isForeground && (System.currentTimeMillis() - lastSeenForegroundTime > GRACE_PERIOD_MS)) {
-                    // Turn OFF
-                    if (RenameUtil.isModOn()) {
+                if (!isForeground && (System.currentTimeMillis() - lastSeenForegroundTime > INACTIVITY_THRESHOLD_MS)) {
+                    // Turn OFF - Normal users only
+                    val prefs = getSharedPreferences(com.example.MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                    val userType = prefs.getString(com.example.MainActivity.KEY_USER_TYPE, "NORMAL")
+                    if (userType == "NORMAL" && RenameUtil.isModOn()) {
                         RenameUtil.turnOff(applicationContext)
                     }
                     isRunning = false

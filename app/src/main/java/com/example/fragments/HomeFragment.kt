@@ -680,7 +680,16 @@ class HomeFragment : Fragment() {
 
     private fun handleTurnOn() {
         val activity = requireActivity() as MainActivity
+        val ctx = context ?: return
         btnTogglePower.isEnabled = false
+        
+        // Reset and track session
+        val prefs = ctx.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putLong("session_start_time", System.currentTimeMillis())
+            .putLong("game_active_time_ms", 0L)
+            .apply()
+
         activity.executeTurnOnGlobal { success ->
             btnTogglePower.isEnabled = true
             if (success) {

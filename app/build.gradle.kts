@@ -71,4 +71,5 @@ dependencies {
 
     // AdMob
     implementation(libs.play.services.ads)
+    implementation(libs.androidx.work.runtime.ktx)
 }

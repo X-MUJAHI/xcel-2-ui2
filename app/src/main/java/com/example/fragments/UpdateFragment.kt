@@ -41,18 +41,23 @@ class UpdateFragment : Fragment() {
 
         btnUpdate.setOnClickListener {
             val targetUrl = if (updateUrl.isNotEmpty()) updateUrl else "https://t.me/xcel1_panel"
-            try {
-                val formattedUrl = if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-                    "https://$targetUrl"
-                } else {
-                    targetUrl
+            if (targetUrl.endsWith(".apk")) {
+                com.example.utils.UpdateManager(requireContext()).startUpdate(targetUrl)
+                Toast.makeText(context, "Downloading update in background...", Toast.LENGTH_SHORT).show()
+            } else {
+                try {
+                    val formattedUrl = if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+                        "https://$targetUrl"
+                    } else {
+                        targetUrl
+                    }
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(formattedUrl)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Could not open update link: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(formattedUrl)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(intent)
-            } catch (e: Exception) {
-                Toast.makeText(context, "Could not open update link: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
 
