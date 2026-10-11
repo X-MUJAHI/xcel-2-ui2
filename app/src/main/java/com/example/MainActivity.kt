@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMessage: Button
     private lateinit var btnAbout: Button
     private lateinit var ivSettings: ImageView
+    private var bannerContainer: FrameLayout? = null
 
     private var permissionReady = false
     private var keyReady = false
@@ -113,6 +114,10 @@ class MainActivity : AppCompatActivity() {
         btnProfile = findViewById(R.id.btn_profile)
         btnAbout = findViewById(R.id.btn_about)
         ivSettings = findViewById(R.id.iv_settings)
+        bannerContainer = findViewById(R.id.banner_ad_container)
+        bannerContainer?.let { container ->
+            com.example.utils.BannerAdManager.setupBanner(this, container)
+        }
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
@@ -225,6 +230,12 @@ class MainActivity : AppCompatActivity() {
 
         com.example.utils.FreezeManager.startListening(this)
         com.example.utils.RewardAdManager.preload(this)
+        bannerContainer?.let { container ->
+            com.example.utils.BannerAdManager.updateVisibilityBasedOnRole(this, container)
+        }
+
+        // Show App Open Ad for normal users on app resume/open
+        (application as? com.example.MainApplication)?.appOpenAdManager?.showAdIfAvailable(this)
 
         FirebaseFirestore.getInstance().collection("app_settings").document("global").get().addOnSuccessListener { doc ->
             if (doc.exists()) {
@@ -781,6 +792,9 @@ class MainActivity : AppCompatActivity() {
         ivSettings.visibility = View.VISIBLE
         val ivMenu: ImageView = findViewById(R.id.iv_menu)
         ivMenu.visibility = View.VISIBLE
+        bannerContainer?.let { container ->
+            com.example.utils.BannerAdManager.updateVisibilityBasedOnRole(this, container)
+        }
         val currentFrag = supportFragmentManager.findFragmentById(R.id.fragment_container)
         if (currentFrag == null || currentFrag is UpdateFragment) {
             switchFragment(HomeFragment())
