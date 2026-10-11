@@ -224,6 +224,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         com.example.utils.FreezeManager.startListening(this)
+        com.example.utils.RewardAdManager.preload(this)
 
         FirebaseFirestore.getInstance().collection("app_settings").document("global").get().addOnSuccessListener { doc ->
             if (doc.exists()) {

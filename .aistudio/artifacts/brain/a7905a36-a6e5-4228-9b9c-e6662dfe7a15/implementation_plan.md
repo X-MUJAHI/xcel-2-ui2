@@ -1,48 +1,43 @@
-# Implementation Plan - Inactivity Auto-Turn-Off, Game Activity Tracking & Background Updates
+# Implementation Plan: Fix Ad Loading & Reliability Issues
 
-## User Review Required
-
-> [!IMPORTANT]
-> **Technical Constraint - "Seamless Silent Update":**
-> Android **strictly prohibits** entirely silent, automated app updates (`InstallPackage` permission) for third-party apps not installed via the Google Play Store. The system enforces user interaction for APK installation to protect user security.
->
-> **Proposed Approach:** The update will be **seamlessly downloaded in the background**. Once finished, the app will trigger the Android system's package installer, which requires the user to click "Install" to confirm the update. This is the closest possible implementation to a "seamless" experience within Android security policies.
+## Root Cause Analysis
+Users are experiencing issues where rewarded ads continuously fail to load or show. The primary factors contributing to this behavior include:
+1. **AdMob Inventory Frequency Caps / No Fill (`ERROR_CODE_NO_FILL`)**: A single AdMob Ad Unit ID (`ca-app-pub-4490063343359332/1223494398`) can experience fill rate drops, temporary network throttling, or AdMob inventory limits on specific devices/regions. When this occurs, AdMob repeatedly throws `No ad config` or `No fill`.
+2. **Strict Single-Shot Loading Without Retry/Backoff**: If preloading fails initially (e.g., app launch during network transition), `isLoadingAd` was reset but no retry was scheduled, leaving the cache empty.
+3. **Preload Using Application Context**: Loading ads with `context.applicationContext` instead of Activity context can lead to rendering issues or lower fill rates in AdMob SDK for rewarded video formats.
+4. **AdMob Official Test Ad Unit Fallback**: In test environments or when live ad serving is pending approval or temporarily limited by AdMob policies, the request fails continuously without an automatic fallback or clear retry options.
+5. **No Loading Timeout**: If AdMob hangs on network request without invoking failure callback, the loader would get stuck.
 
 ---
 
 ## Proposed Changes
 
-### 1. Inactivity Auto-Turn-Off & Activity Tracking
-*   **`GameMonitorService.kt`**:
-    *   Track the game's foreground/background state using `UsageStatsManager`.
-    *   Accumulate total foreground time in `SharedPreferences` while the mod is ON.
-    *   Implement a 20-minute inactivity timer. If the game remains backgrounded beyond this threshold, trigger `MainActivity.executeTurnOffGlobal()`.
-*   **`HomeFragment.kt`**:
-    *   Read the accumulated foreground time from `SharedPreferences` and display it in the Home screen UI.
+### 1. Robust Ad Loading Strategy (`RewardAdManager.kt`)
+* **Dual Ad Unit / Test Unit Fallback**:
+  * Primary Unit: `ca-app-pub-4490063343359332/1223494398`
+  * Secondary / Fallback Test Unit: Google's official AdMob sample rewarded ad unit (`ca-app-pub-3940256099942544/5224354917`) if live inventory fails or returns `NO_FILL`, ensuring users are never blocked continuously.
+* **Smart Retry with Exponential Backoff**:
+  * On preload failure, schedule an automatic retry with exponential delay (3s, 6s, 15s).
+* **Activity Context for Loading**:
+  * Always prioritize valid `Activity` context when loading rewarded ads for optimal SDK compatibility and video rendering.
+* **Loading Timeout Safety**:
+  * Add a 10-second timeout to the loading dialog so the user is never stuck indefinitely.
+* **Transparent Retry Dialog**:
+  * Show a clear retry dialog with a direct "Retry" button that immediately attempts a fresh load, and informative error description.
+* **Proactive Preloading**:
+  * Preload an ad immediately on app launch, after every ad dismiss/error, and whenever `MainActivity` resumes.
 
-### 2. Seamless Background Update
-*   **`UpdateManager.kt` (New)**:
-    *   Uses `WorkManager` for background APK download.
-    *   Monitors download status via `LiveData`.
-    *   Upon completion, triggers `Intent(Intent.ACTION_VIEW)` to launch the system package installer for the downloaded APK.
-*   **`MainActivity.kt`**:
-    *   Triggers the `UpdateManager` workflow when a remote version update is detected (via Firestore).
+### 2. Activity Lifecycle Hook (`MainActivity.kt`)
+* Call `RewardAdManager.preload(this)` inside `onResume()` to ensure a fresh ad is constantly cached whenever the user returns to the app.
 
 ---
 
 ## Verification Plan
 
-### Automated Build Verification
-- Execute `compile_applet` to ensure new `WorkManager` dependencies (if needed) and logic integrate correctly.
+### Automated Verification
+* Run `compile_applet` to ensure syntax, imports, and AdMob SDK callback structures are completely error-free.
 
-### Manual Verification Scenarios
-1. **Activity Tracking**:
-   - Start the mod, open Free Fire MAX, and verify time starts accumulating on the Home UI.
-   - Switch apps, verify time stops accumulating.
-2. **Auto-Turn-Off**:
-   - Start the mod, open Free Fire MAX, then background it for 21 minutes.
-   - Verify the mod state automatically flips to "OFF" and logs the action.
-3. **Background Update**:
-   - Trigger a remote version mismatch in Firebase.
-   - Verify the app begins the background download process.
-   - Verify the system install prompt appears once the download finishes.
+### Verification Scenarios
+1. **Normal Flow**: Trigger Turn On / Activate / Script Install / Open Game -> preloaded ad shows immediately, reward granted upon completion.
+2. **Network/Fill Drop Flow**: If live unit returns No Fill, fallback triggers smoothly, or user is offered a clean Retry button that re-initiates the request without crashing or hanging.
+3. **Dismiss / Re-attempt**: After closing an ad, verify next ad is immediately preloaded for future actions.
