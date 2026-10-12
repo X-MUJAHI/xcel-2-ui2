@@ -20,8 +20,6 @@ object RewardAdManager {
 
     private const val TAG = "RewardAdManager"
     const val PRIMARY_AD_UNIT_ID = "ca-app-pub-4490063343359332/1223494398"
-    // Official Google AdMob sample test unit for rewarded video ads (guaranteed 100% fill rate)
-    const val FALLBACK_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
 
     private var cachedRewardedAd: RewardedAd? = null
     private var isLoadingAd = false
@@ -52,7 +50,8 @@ object RewardAdManager {
     }
 
     /**
-     * Preloads a rewarded ad with intelligent fallback and exponential backoff retry.
+     * Preloads a real rewarded ad with exponential backoff retry.
+     * Never loads test ads.
      */
     fun preload(context: Context) {
         if (isAdmin(context)) return
@@ -62,7 +61,7 @@ object RewardAdManager {
         val adRequest = AdRequest.Builder().build()
         val appContext = context.applicationContext
 
-        // Attempt primary ad unit first
+        // Attempt real production ad unit
         RewardedAd.load(appContext, PRIMARY_AD_UNIT_ID, adRequest, object : RewardedAdLoadCallback() {
             override fun onAdLoaded(rewardedAd: RewardedAd) {
                 Log.d(TAG, "Primary rewarded ad preloaded successfully.")
@@ -72,23 +71,10 @@ object RewardAdManager {
             }
 
             override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                Log.w(TAG, "Primary rewarded ad failed to preload: ${loadAdError.message} (code ${loadAdError.code}). Attempting fallback test unit...")
-                // Attempt fallback to ensure user is never blocked by No Fill / Inventory shortages
-                RewardedAd.load(appContext, FALLBACK_TEST_AD_UNIT_ID, adRequest, object : RewardedAdLoadCallback() {
-                    override fun onAdLoaded(rewardedAd: RewardedAd) {
-                        Log.d(TAG, "Fallback test rewarded ad preloaded successfully.")
-                        cachedRewardedAd = rewardedAd
-                        isLoadingAd = false
-                        retryAttempt = 0
-                    }
-
-                    override fun onAdFailedToLoad(fallbackError: LoadAdError) {
-                        Log.e(TAG, "Fallback rewarded ad also failed: ${fallbackError.message}")
-                        cachedRewardedAd = null
-                        isLoadingAd = false
-                        schedulePreloadRetry(appContext)
-                    }
-                })
+                Log.w(TAG, "Primary rewarded ad failed to preload: ${loadAdError.message} (code ${loadAdError.code}).")
+                cachedRewardedAd = null
+                isLoadingAd = false
+                schedulePreloadRetry(appContext)
             }
         })
     }
@@ -97,8 +83,8 @@ object RewardAdManager {
         if (isRetryingPreload || cachedRewardedAd != null || isAdmin(context)) return
         isRetryingPreload = true
 
-        val delays = longArrayOf(3000L, 6000L, 12000L, 20000L)
-        val delay = delays.getOrElse(retryAttempt) { 20000L }
+        val delays = longArrayOf(4000L, 8000L, 16000L, 30000L)
+        val delay = delays.getOrElse(retryAttempt) { 30000L }
         retryAttempt++
 
         mainHandler.postDelayed({
@@ -114,7 +100,7 @@ object RewardAdManager {
      * Executes the target action with rewarded ad gating for normal users.
      * Admin users bypass the ad completely.
      * If preloaded ad exists, shows immediately.
-     * Otherwise displays a loading dialog with timeout and attempts live load (primary -> fallback).
+     * If no real ad is available or fails to load, DOES NOT show test ads; skips ad and continues directly!
      */
     fun showRewardedAdForAction(activity: Activity, onRewardEarned: () -> Unit) {
         // 1. Admin bypass check
@@ -124,7 +110,7 @@ object RewardAdManager {
             return
         }
 
-        // 2. If cached ad is ready, show immediately
+        // 2. If real cached ad is ready, show immediately
         val ad = cachedRewardedAd
         if (ad != null) {
             cachedRewardedAd = null
@@ -132,7 +118,8 @@ object RewardAdManager {
             return
         }
 
-        // 3. Otherwise show themed loading dialog and fetch fresh ad
+        // 3. Otherwise show brief loading dialog (up to 4 seconds) to give real ad a chance to load.
+        // If not filled / fails, immediately dismiss and skip ad so user continues smoothly!
         val loadingDialog = createThemedLoadingDialog(activity)
         loadingDialog.show()
 
@@ -141,7 +128,7 @@ object RewardAdManager {
 
         var hasHandledResponse = false
 
-        // Timeout handler (12 seconds) to prevent infinite loading state
+        // Quick timeout (4 seconds) - if real ad isn't loaded quickly, skip and continue
         val timeoutRunnable = Runnable {
             if (!hasHandledResponse && !activity.isFinishing && !activity.isDestroyed) {
                 hasHandledResponse = true
@@ -149,16 +136,14 @@ object RewardAdManager {
                 if (loadingDialog.isShowing) {
                     try { loadingDialog.dismiss() } catch (ignored: Exception) {}
                 }
-                showRetryAlertDialog(
-                    activity,
-                    "Ad loading timed out. Please check your network connection and tap Retry.",
-                    onRewardEarned
-                )
+                Log.d(TAG, "Ad load timed out - skipping ad and continuing for user.")
+                preload(activity.applicationContext)
+                onRewardEarned()
             }
         }
-        mainHandler.postDelayed(timeoutRunnable, 12000L)
+        mainHandler.postDelayed(timeoutRunnable, 4000L)
 
-        // Try primary live ad unit
+        // Try real ad unit
         RewardedAd.load(activity, PRIMARY_AD_UNIT_ID, adRequest, object : RewardedAdLoadCallback() {
             override fun onAdLoaded(rewardedAd: RewardedAd) {
                 if (hasHandledResponse) return
@@ -172,37 +157,18 @@ object RewardAdManager {
             }
 
             override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                Log.w(TAG, "Primary ad load failed (${loadAdError.message}). Attempting fallback unit...")
+                Log.w(TAG, "Real ad load failed (${loadAdError.message}). Skipping ad and continuing action.")
                 if (hasHandledResponse) return
-
-                // Immediate fallback to test ad unit
-                RewardedAd.load(activity, FALLBACK_TEST_AD_UNIT_ID, adRequest, object : RewardedAdLoadCallback() {
-                    override fun onAdLoaded(rewardedAd: RewardedAd) {
-                        if (hasHandledResponse) return
-                        hasHandledResponse = true
-                        mainHandler.removeCallbacks(timeoutRunnable)
-                        isLoadingAd = false
-                        if (loadingDialog.isShowing) {
-                            try { loadingDialog.dismiss() } catch (ignored: Exception) {}
-                        }
-                        displayRewardedAd(activity, rewardedAd, onRewardEarned)
-                    }
-
-                    override fun onAdFailedToLoad(fallbackError: LoadAdError) {
-                        if (hasHandledResponse) return
-                        hasHandledResponse = true
-                        mainHandler.removeCallbacks(timeoutRunnable)
-                        isLoadingAd = false
-                        if (loadingDialog.isShowing) {
-                            try { loadingDialog.dismiss() } catch (ignored: Exception) {}
-                        }
-                        showRetryAlertDialog(
-                            activity,
-                            "Ad could not be loaded (${fallbackError.message}). Please check your internet connection and try again.",
-                            onRewardEarned
-                        )
-                    }
-                })
+                hasHandledResponse = true
+                mainHandler.removeCallbacks(timeoutRunnable)
+                isLoadingAd = false
+                if (loadingDialog.isShowing) {
+                    try { loadingDialog.dismiss() } catch (ignored: Exception) {}
+                }
+                // Schedule background preload for later
+                preload(activity.applicationContext)
+                // Skip the ad and continue directly!
+                onRewardEarned()
             }
         })
     }
@@ -236,14 +202,13 @@ object RewardAdManager {
             }
 
             override fun onAdFailedToShowFullScreenContent(adError: AdError) {
-                Log.e(TAG, "Failed to show rewarded ad: ${adError.message}")
+                Log.e(TAG, "Failed to show rewarded ad: ${adError.message}. Skipping and continuing.")
                 cachedRewardedAd = null
                 preload(activity.applicationContext)
-                showRetryAlertDialog(
-                    activity,
-                    "Could not display ad (${adError.message}). Please retry.",
-                    onRewardEarned
-                )
+                // If showing fails, do not block the user - skip and proceed
+                mainHandler.post {
+                    onRewardEarned()
+                }
             }
         }
 
@@ -255,32 +220,9 @@ object RewardAdManager {
 
     private fun createThemedLoadingDialog(activity: Activity): AlertDialog {
         return AlertDialog.Builder(activity, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-            .setTitle("Loading Video Ad")
-            .setMessage("Please wait while the video sponsor loads...")
+            .setTitle("Loading Sponsor")
+            .setMessage("Please wait a moment...")
             .setCancelable(false)
             .create()
-    }
-
-    private fun showRetryAlertDialog(
-        activity: Activity,
-        message: String,
-        onRetryAction: (() -> Unit)? = null
-    ) {
-        activity.runOnUiThread {
-            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
-            val builder = AlertDialog.Builder(activity, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-                .setTitle("Ad Loading Failed")
-                .setMessage(message)
-                .setNegativeButton("Cancel", null)
-
-            if (onRetryAction != null) {
-                builder.setPositiveButton("RETRY NOW") { _, _ ->
-                    showRewardedAdForAction(activity, onRetryAction)
-                }
-            } else {
-                builder.setPositiveButton("OK", null)
-            }
-            builder.show()
-        }
     }
 }

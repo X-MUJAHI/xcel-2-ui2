@@ -456,6 +456,10 @@ class HomeFragment : Fragment() {
                         requireContext().startService(serviceIntent)
                     }
                     
+                    val rootActivity = activity as? MainActivity
+                    val inAppTimerView = rootActivity?.findViewById<View>(R.id.floating_inapp_timer)
+                    com.example.utils.FloatingTimerManager.start(requireContext(), inAppTimerView)
+
                     startActivity(launchIntent)
                 } else {
                     val err = RenameUtil.lastError.ifEmpty { "Please activate panel first." }
@@ -695,6 +699,9 @@ class HomeFragment : Fragment() {
             if (success) {
                 Toast.makeText(context, "Mod turned ON", Toast.LENGTH_SHORT).show()
                 startTimerUpdate()
+                val rootActivity = activity as? MainActivity
+                val inAppTimerView = rootActivity?.findViewById<View>(R.id.floating_inapp_timer)
+                com.example.utils.FloatingTimerManager.start(ctx, inAppTimerView)
             } else {
                 val err = RenameUtil.lastError.ifEmpty { "Check destination folders." }
                 Toast.makeText(context, "Failed to turn ON:\n$err", Toast.LENGTH_LONG).show()
@@ -727,6 +734,7 @@ class HomeFragment : Fragment() {
             updateUIState()
             countDownTimer?.cancel()
             tvTimer.text = "Timer: --"
+            com.example.utils.FloatingTimerManager.stop(context)
         }
     }
 

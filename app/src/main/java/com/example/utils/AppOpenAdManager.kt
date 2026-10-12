@@ -15,15 +15,14 @@ import java.util.Date
 
 /**
  * Manages App Open Ad loading and presentation for normal users.
- * Automatically loads App Open ads and shows them on app startup or foregrounding.
+ * Automatically loads real App Open ads and shows them on app startup or foregrounding.
+ * Never falls back to test ads; skips silently if real ad is not available.
  */
 class AppOpenAdManager(private val application: Application) : Application.ActivityLifecycleCallbacks {
 
     companion object {
         private const val TAG = "AppOpenAdManager"
         const val AD_UNIT_ID = "ca-app-pub-4490063343359332/2365874033"
-        // Google test unit fallback in case of no-fill
-        const val FALLBACK_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/9257390708"
         private const val FOUR_HOURS_MILLIS = 4 * 3600 * 1000L
     }
 
@@ -61,33 +60,16 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
             request,
             object : AppOpenAd.AppOpenAdLoadCallback() {
                 override fun onAdLoaded(ad: AppOpenAd) {
-                    Log.d(TAG, "App Open Ad loaded successfully.")
+                    Log.d(TAG, "Real App Open Ad loaded successfully.")
                     appOpenAd = ad
                     isLoadingAd = false
                     loadTime = Date().time
                 }
 
                 override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                    Log.w(TAG, "Primary App Open Ad failed: ${loadAdError.message}. Trying fallback test unit...")
-                    AppOpenAd.load(
-                        context,
-                        FALLBACK_TEST_AD_UNIT_ID,
-                        request,
-                        object : AppOpenAd.AppOpenAdLoadCallback() {
-                            override fun onAdLoaded(fallbackAd: AppOpenAd) {
-                                Log.d(TAG, "Fallback App Open Ad loaded.")
-                                appOpenAd = fallbackAd
-                                isLoadingAd = false
-                                loadTime = Date().time
-                            }
-
-                            override fun onAdFailedToLoad(error: LoadAdError) {
-                                Log.e(TAG, "Fallback App Open Ad also failed: ${error.message}")
-                                isLoadingAd = false
-                                appOpenAd = null
-                            }
-                        }
-                    )
+                    Log.w(TAG, "Real App Open Ad failed to load: ${loadAdError.message}. Skipping test ads.")
+                    isLoadingAd = false
+                    appOpenAd = null
                 }
             }
         )
@@ -95,6 +77,7 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
 
     /**
      * Shows the App Open ad if available and user is NORMAL.
+     * Skips immediately without showing test ads if real ad is not available.
      */
     fun showAdIfAvailable(activity: Activity, onShowComplete: () -> Unit = {}) {
         if (isAdmin(activity)) {
@@ -109,7 +92,7 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
         }
 
         if (!isAdAvailable()) {
-            Log.d(TAG, "App Open Ad is not ready. Loading for next time.")
+            Log.d(TAG, "App Open Ad is not ready. Skipping directly without test ads.")
             onShowComplete()
             loadAd(activity)
             return
@@ -133,7 +116,7 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
             }
 
             override fun onAdShowedFullScreenContent() {
-                Log.d(TAG, "App Open Ad showed successfully.")
+                Log.d(TAG, "App Open Ad showing fullscreen.")
                 isShowingAd = true
             }
         }
@@ -150,13 +133,17 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
         currentActivity = activity
     }
 
-    override fun onActivityStopped(activity: Activity) {}
     override fun onActivityPaused(activity: Activity) {}
+
+    override fun onActivityStopped(activity: Activity) {}
+
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+
     override fun onActivityDestroyed(activity: Activity) {
         if (currentActivity == activity) {
             currentActivity = null
         }
     }
+
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
 }
