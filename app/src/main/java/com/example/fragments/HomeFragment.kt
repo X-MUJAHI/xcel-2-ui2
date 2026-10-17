@@ -166,9 +166,23 @@ class HomeFragment : Fragment() {
                 handleTurnOff()
             } else {
                 com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
-                    showTurnOnScriptSelection()
+                    turnOnLastUsedScript()
                 }
             }
+        }
+
+        btnTogglePower.setOnLongClickListener {
+            val ctx = context ?: return@setOnLongClickListener true
+            if (FreezeManager.isCurrentlyFrozen(ctx)) {
+                val reason = FreezeManager.getFreezeReason(ctx)
+                Toast.makeText(ctx, "❄️ Server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
+                return@setOnLongClickListener true
+            }
+            if (!isOn) {
+                Toast.makeText(ctx, "Select script to switch...", Toast.LENGTH_SHORT).show()
+                showTurnOnScriptSelection()
+            }
+            true
         }
 
         btnBoost.setOnClickListener {
@@ -637,6 +651,26 @@ class HomeFragment : Fragment() {
                 }
             }
         )
+    }
+
+    private fun turnOnLastUsedScript() {
+        val ctx = context ?: return
+        val activeId = PanelFileManager.getActiveScriptId(ctx)
+        val activeName = PanelFileManager.getActiveScriptName(ctx)
+
+        // Verify or reactivate staged files for the active/last used script if needed
+        val f1On = PanelFileManager.getStagedTurnOnFile1(ctx)
+        val f2On = PanelFileManager.getStagedTurnOnFile2(ctx)
+        if (!f1On.exists() || !f2On.exists() || f1On.length() == 0L || f2On.length() == 0L) {
+            val file1Name = PanelFileManager.getFile1Name(ctx)
+            val file2Name = PanelFileManager.getFile2Name(ctx)
+            val scriptItem = PanelFileManager.ScriptItem(activeId, activeName, "", "", file1Name, file2Name)
+            if (PanelFileManager.isScriptStaged(ctx, scriptItem)) {
+                PanelFileManager.activateScriptFromStaged(ctx, scriptItem)
+            }
+        }
+
+        handleTurnOn()
     }
 
     private fun showTurnOnScriptSelection() {

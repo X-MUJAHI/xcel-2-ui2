@@ -48,7 +48,7 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
     }
 
     fun loadAd(context: Context) {
-        if (isAdmin(context)) return
+        if (isAdmin(context) || !RewardAdManager.canShowAd(context)) return
         if (isLoadingAd || isAdAvailable()) return
 
         isLoadingAd = true
@@ -86,6 +86,13 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
             return
         }
 
+        // 6-Hour cooldown check
+        if (!RewardAdManager.canShowAd(activity)) {
+            Log.d(TAG, "App Open Ad 6-hour cooldown active. Skipping.")
+            onShowComplete()
+            return
+        }
+
         if (isShowingAd) {
             Log.d(TAG, "App Open Ad is already showing.")
             return
@@ -104,7 +111,6 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
                 appOpenAd = null
                 isShowingAd = false
                 onShowComplete()
-                loadAd(activity)
             }
 
             override fun onAdFailedToShowFullScreenContent(adError: AdError) {
@@ -112,12 +118,12 @@ class AppOpenAdManager(private val application: Application) : Application.Activ
                 appOpenAd = null
                 isShowingAd = false
                 onShowComplete()
-                loadAd(activity)
             }
 
             override fun onAdShowedFullScreenContent() {
                 Log.d(TAG, "App Open Ad showing fullscreen.")
                 isShowingAd = true
+                RewardAdManager.recordAdShown(activity)
             }
         }
 

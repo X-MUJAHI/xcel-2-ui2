@@ -21,6 +21,9 @@ object RewardAdManager {
     private const val TAG = "RewardAdManager"
     const val PRIMARY_AD_UNIT_ID = "ca-app-pub-4490063343359332/1223494398"
 
+    const val SIX_HOURS_MILLIS = 6 * 60 * 60 * 1000L
+    const val KEY_LAST_AD_SHOWN = "last_global_ad_shown_timestamp"
+
     private var cachedRewardedAd: RewardedAd? = null
     private var isLoadingAd = false
     private var isInitialized = false
@@ -50,11 +53,38 @@ object RewardAdManager {
     }
 
     /**
+     * Checks if at least 6 hours have passed since the last full-screen ad was shown.
+     * Admin users never need to watch ads.
+     */
+    fun canShowAd(context: Context): Boolean {
+        if (isAdmin(context)) return false
+        val prefs = context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+        val lastShown = prefs.getLong(KEY_LAST_AD_SHOWN, 0L)
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastShown
+        val allowed = elapsed >= SIX_HOURS_MILLIS
+        if (!allowed) {
+            val remainingMinutes = (SIX_HOURS_MILLIS - elapsed) / (60 * 1000)
+            Log.d(TAG, "Ad cooldown active: $remainingMinutes minutes left before next ad. Bypassing.")
+        }
+        return allowed
+    }
+
+    /**
+     * Records timestamp when any ad is shown to enforce the 6-hour cooldown.
+     */
+    fun recordAdShown(context: Context) {
+        val prefs = context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putLong(KEY_LAST_AD_SHOWN, System.currentTimeMillis()).apply()
+        Log.d(TAG, "Recorded ad shown timestamp. Next ad available in 6 hours.")
+    }
+
+    /**
      * Preloads a real rewarded ad with exponential backoff retry.
      * Never loads test ads.
      */
     fun preload(context: Context) {
-        if (isAdmin(context)) return
+        if (isAdmin(context) || !canShowAd(context)) return
         if (cachedRewardedAd != null || isLoadingAd) return
 
         isLoadingAd = true
@@ -110,7 +140,14 @@ object RewardAdManager {
             return
         }
 
-        // 2. If real cached ad is ready, show immediately
+        // 2. 6-Hour cooldown check
+        if (!canShowAd(activity)) {
+            Log.d(TAG, "Ad cooldown active (less than 6 hours since last ad). Bypassing ad.")
+            onRewardEarned()
+            return
+        }
+
+        // 3. If real cached ad is ready, show immediately
         val ad = cachedRewardedAd
         if (ad != null) {
             cachedRewardedAd = null
@@ -118,7 +155,7 @@ object RewardAdManager {
             return
         }
 
-        // 3. Otherwise show brief loading dialog (up to 4 seconds) to give real ad a chance to load.
+        // 4. Otherwise show brief loading dialog (up to 4 seconds) to give real ad a chance to load.
         // If not filled / fails, immediately dismiss and skip ad so user continues smoothly!
         val loadingDialog = createThemedLoadingDialog(activity)
         loadingDialog.show()
@@ -181,10 +218,14 @@ object RewardAdManager {
         var userEarnedReward = false
 
         rewardedAd.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                Log.d(TAG, "Rewarded ad showed fullscreen.")
+                recordAdShown(activity)
+            }
+
             override fun onAdDismissedFullScreenContent() {
                 Log.d(TAG, "Rewarded ad dismissed. Reward earned: $userEarnedReward")
                 cachedRewardedAd = null
-                preload(activity.applicationContext)
 
                 if (userEarnedReward) {
                     mainHandler.post {
@@ -204,7 +245,6 @@ object RewardAdManager {
             override fun onAdFailedToShowFullScreenContent(adError: AdError) {
                 Log.e(TAG, "Failed to show rewarded ad: ${adError.message}. Skipping and continuing.")
                 cachedRewardedAd = null
-                preload(activity.applicationContext)
                 // If showing fails, do not block the user - skip and proceed
                 mainHandler.post {
                     onRewardEarned()
@@ -215,6 +255,7 @@ object RewardAdManager {
         rewardedAd.show(activity) { _ ->
             Log.d(TAG, "User earned reward!")
             userEarnedReward = true
+            recordAdShown(activity)
         }
     }
 
