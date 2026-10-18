@@ -361,6 +361,11 @@ class HomeFragment : Fragment() {
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
 
         dialogView.findViewById<Button>(R.id.btn_game_ff_max)?.setOnClickListener {
+            if (FreezeManager.isCurrentlyFrozen(ctx)) {
+                val reason = FreezeManager.getFreezeReason(ctx)
+                Toast.makeText(ctx, "❄️ Free Fire MAX server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             dialog.dismiss()
             proceedLaunchGame("com.dts.freefiremax", "Free Fire MAX")
         }
@@ -478,52 +483,69 @@ class HomeFragment : Fragment() {
 
     private fun executeGameLaunchSequence(launchIntent: Intent, targetPackage: String? = null) {
         val startTime = System.currentTimeMillis()
-        
+        val isFrozen = context?.let { FreezeManager.isCurrentlyFrozen(it) } ?: false
+        val isFfTh = (targetPackage == "com.dts.freefireth")
+
         val progressDialog = android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
-            .setTitle("Anti-Ban Active")
-            .setMessage("Applying protections and launching game...")
+            .setTitle(if (isFrozen && isFfTh) "Opening Free Fire" else "Anti-Ban Active")
+            .setMessage(if (isFrozen && isFfTh) "Launching game (server is frozen)..." else "Applying protections and launching game...")
             .setCancelable(false)
             .create()
         progressDialog.show()
-        
+
+        val onLaunchGame = {
+            if (isFfTh) {
+                val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("ffth_opened_via_app", true)
+                    .putLong("ffth_opened_timestamp", System.currentTimeMillis())
+                    .apply()
+            }
+
+            // Start GameMonitorService
+            val serviceIntent = Intent(requireContext(), com.example.services.GameMonitorService::class.java).apply {
+                targetPackage?.let { putExtra("target_package", it) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                requireContext().startForegroundService(serviceIntent)
+            } else {
+                requireContext().startService(serviceIntent)
+            }
+
+            val rootActivity = activity as? MainActivity
+            val inAppTimerView = rootActivity?.findViewById<View>(R.id.floating_inapp_timer)
+            com.example.utils.FloatingTimerManager.start(requireContext(), inAppTimerView)
+
+            startActivity(launchIntent)
+        }
+
+        if (isFrozen && isFfTh) {
+            // When frozen, com.dts.freefireth can still be opened through "Open Game" button!
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (progressDialog.isShowing) {
+                    try { progressDialog.dismiss() } catch (ignored: Exception) {}
+                }
+                Toast.makeText(context, "Opening Free Fire...", Toast.LENGTH_SHORT).show()
+                onLaunchGame()
+            }, 1000L)
+            return
+        }
+
         val activity = requireActivity() as MainActivity
         activity.executeTurnOnGlobal { success ->
             updateUIState()
-            
+
             // Calculate remaining time to wait (min 3 seconds total)
             val elapsed = System.currentTimeMillis() - startTime
             val remainingWait = Math.max(0L, 3000L - elapsed)
-            
+
             Handler(Looper.getMainLooper()).postDelayed({
                 if (progressDialog.isShowing) {
-                    progressDialog.dismiss()
+                    try { progressDialog.dismiss() } catch (ignored: Exception) {}
                 }
                 if (success) {
                     Toast.makeText(context, "Anti-Ban applied! Launching...", Toast.LENGTH_SHORT).show()
-                    
-                    if (targetPackage == "com.dts.freefireth") {
-                        val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-                        prefs.edit()
-                            .putBoolean("ffth_opened_via_app", true)
-                            .putLong("ffth_opened_timestamp", System.currentTimeMillis())
-                            .apply()
-                    }
-
-                    // Start GameMonitorService
-                    val serviceIntent = Intent(requireContext(), com.example.services.GameMonitorService::class.java).apply {
-                        targetPackage?.let { putExtra("target_package", it) }
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        requireContext().startForegroundService(serviceIntent)
-                    } else {
-                        requireContext().startService(serviceIntent)
-                    }
-                    
-                    val rootActivity = activity as? MainActivity
-                    val inAppTimerView = rootActivity?.findViewById<View>(R.id.floating_inapp_timer)
-                    com.example.utils.FloatingTimerManager.start(requireContext(), inAppTimerView)
-
-                    startActivity(launchIntent)
+                    onLaunchGame()
                 } else {
                     val err = RenameUtil.lastError.ifEmpty { "Please activate panel first." }
                     Toast.makeText(context, "Could not turn on: $err", Toast.LENGTH_LONG).show()
