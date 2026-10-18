@@ -217,12 +217,6 @@ class HomeFragment : Fragment() {
         }
 
         btnOpenGame.setOnClickListener {
-            val ctx = context ?: return@setOnClickListener
-            if (FreezeManager.isCurrentlyFrozen(ctx)) {
-                val reason = FreezeManager.getFreezeReason(ctx)
-                Toast.makeText(ctx, "❄️ Cannot open game: Server is currently frozen by admin.\n$reason", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
             showGameSelectionDialog()
         }
 
@@ -360,10 +354,18 @@ class HomeFragment : Fragment() {
             .create()
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
 
-        dialogView.findViewById<Button>(R.id.btn_game_ff_max)?.setOnClickListener {
+        val isFrozen = FreezeManager.isCurrentlyFrozen(ctx)
+        val btnFfMax = dialogView.findViewById<Button>(R.id.btn_game_ff_max)
+        val btnFfTh = dialogView.findViewById<Button>(R.id.btn_game_ff_th)
+        if (isFrozen) {
+            btnFfMax?.text = "🎮 FREE FIRE MAX (FROZEN ❄️)"
+            btnFfTh?.text = "🔥 FREE FIRE (AVAILABLE ✓)"
+        }
+
+        btnFfMax?.setOnClickListener {
             if (FreezeManager.isCurrentlyFrozen(ctx)) {
                 val reason = FreezeManager.getFreezeReason(ctx)
-                Toast.makeText(ctx, "❄️ Free Fire MAX server is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "❄️ Free Fire MAX is currently frozen by admin:\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             dialog.dismiss()
@@ -527,15 +529,40 @@ class HomeFragment : Fragment() {
             startActivity(launchIntent)
         }
 
-        if (isFrozen && isFfTh) {
-            // When frozen, com.dts.freefireth can still be opened through "Open Game" button!
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (progressDialog.isShowing) {
-                    try { progressDialog.dismiss() } catch (ignored: Exception) {}
+        if (isFfTh) {
+            // Free Fire (com.dts.freefireth) can always be opened through Open Game button, even if server is frozen
+            val ctx = context ?: return
+            if (!isFrozen && PanelFileManager.areFilesStaged(ctx)) {
+                val activity = requireActivity() as MainActivity
+                activity.executeTurnOnGlobal { success ->
+                    updateUIState()
+                    val elapsed = System.currentTimeMillis() - startTime
+                    val remainingWait = Math.max(0L, 2000L - elapsed)
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (progressDialog.isShowing) {
+                            try { progressDialog.dismiss() } catch (ignored: Exception) {}
+                        }
+                        if (success) {
+                            Toast.makeText(context, "Anti-Ban applied! Opening Free Fire...", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Opening Free Fire...", Toast.LENGTH_SHORT).show()
+                        }
+                        onLaunchGame()
+                    }, remainingWait)
                 }
-                Toast.makeText(context, "Opening Free Fire...", Toast.LENGTH_SHORT).show()
-                onLaunchGame()
-            }, 1000L)
+            } else {
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (progressDialog.isShowing) {
+                        try { progressDialog.dismiss() } catch (ignored: Exception) {}
+                    }
+                    if (isFrozen) {
+                        Toast.makeText(context, "Opening Free Fire (server frozen)...", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Opening Free Fire...", Toast.LENGTH_SHORT).show()
+                    }
+                    onLaunchGame()
+                }, 1000L)
+            }
             return
         }
 

@@ -96,6 +96,12 @@ class MainActivity : AppCompatActivity() {
     private val requestPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
         if (requestCode == 1001) {
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                Thread {
+                    val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
+                    if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                        RenameUtil.suspendPackage("com.dts.freefireth")
+                    }
+                }.start()
                 proceedChecks()
             } else {
                 Toast.makeText(this, "Shizuku permission denied! Some features will not work.", Toast.LENGTH_LONG).show()
@@ -493,6 +499,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+            Thread {
+                val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
+                if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                    RenameUtil.suspendPackage("com.dts.freefireth")
+                }
+            }.start()
             proceedChecks()
         } else {
             val shizukuPermPrompts = prefs.getInt("shizuku_perm_prompt_count", 0)
