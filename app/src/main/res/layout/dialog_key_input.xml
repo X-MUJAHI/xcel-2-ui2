@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="@color/cyber_bg" android:padding="20.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <TextView android:textSize="18.0sp" android:textStyle="bold" android:textColor="@color/cyber_cyan" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginBottom="4.0dip" android:text="ACTIVATE PANEL" android:letterSpacing="0.05" />
+    <TextView android:textSize="12.0sp" android:textColor="@color/cyber_text_secondary" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginBottom="16.0dip" android:text="Enter your license key below. Keys are automatically pasted if copied to clipboard." />
+    <EditText android:textSize="15.0sp" android:textColor="@color/cyber_text_primary" android:textColorHint="@color/cyber_text_muted" android:id="@+id/et_key" android:background="@drawable/input_field_bg" android:paddingLeft="14.0dip" android:paddingRight="14.0dip" android:layout_width="fill_parent" android:layout_height="52.0dip" android:hint="Paste or enter key here..." android:inputType="text" android:paddingHorizontal="14.0dip" />
+</LinearLayout>

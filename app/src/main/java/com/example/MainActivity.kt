@@ -2,6 +2,7 @@ package com.example
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -235,6 +236,12 @@ class MainActivity : AppCompatActivity() {
         bannerContainer?.let { container ->
             com.example.utils.BannerAdManager.updateVisibilityBasedOnRole(this, container)
         }
+
+        // Ensure GameMonitorService is active to monitor game launches
+        startGameMonitorServiceIfPermitted()
+
+        // Check if returning from a blocked unauthorized manual FF launch
+        checkBlockedLaunchIntent(intent)
 
         // Show App Open Ad for normal users on app resume/open
         (application as? com.example.MainApplication)?.appOpenAdManager?.showAdIfAvailable(this)
@@ -955,5 +962,43 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread(callback)
             }
         }.start()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        checkBlockedLaunchIntent(intent)
+    }
+
+    private fun checkBlockedLaunchIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("blocked_manual_ffth", false) == true) {
+            intent.removeExtra("blocked_manual_ffth")
+            AlertDialog.Builder(this, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                .setTitle("Direct Launch Blocked")
+                .setMessage("Direct opening of Free Fire is blocked to protect your account.\n\nPlease open Free Fire using the 'OPEN GAME' button inside xcel2.")
+                .setPositiveButton("OK", null)
+                .show()
+        }
+    }
+
+    private fun startGameMonitorServiceIfPermitted() {
+        try {
+            val appOps = getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+            val mode = appOps?.unsafeCheckOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+            if (mode == android.app.AppOpsManager.MODE_ALLOWED) {
+                val serviceIntent = Intent(this, com.example.services.GameMonitorService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

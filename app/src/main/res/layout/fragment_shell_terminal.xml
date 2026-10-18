@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="#ff151a22" android:layout_width="fill_parent" android:layout_height="fill_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:padding="16.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content">
+        <ImageView android:id="@+id/iv_back" android:padding="4.0dip" android:layout_width="32.0dip" android:layout_height="32.0dip" android:src="@drawable/ic_back_arrow" />
+        <TextView android:textSize="20.0sp" android:textStyle="bold" android:textColor="#ff00e5ff" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Shell Terminal" android:layout_marginStart="16.0dip" />
+    </LinearLayout>
+    <EditText android:textColor="#ffffffff" android:textColorHint="#ff555555" android:gravity="start|center|top" android:id="@+id/et_commands" android:background="#ff0a0c10" android:padding="16.0dip" android:scrollbars="vertical" android:layout_width="fill_parent" android:layout_height="0.0dip" android:layout_margin="16.0dip" android:hint="input shizuku commands here..." android:layout_weight="1.0" android:fontFamily="monospace" />
+    <TextView android:textColor="#ff00ff00" android:id="@+id/tv_output" android:background="#ff1f2937" android:padding="16.0dip" android:scrollbars="vertical" android:layout_width="fill_parent" android:layout_height="0.0dip" android:layout_margin="16.0dip" android:text="Output will appear here..." android:layout_weight="1.0" android:fontFamily="monospace" />
+    <LinearLayout android:gravity="end" android:orientation="horizontal" android:padding="8.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content">
+        <Button android:textColor="#ffffffff" android:id="@+id/btn_saved" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Saved" android:layout_marginEnd="8.0dip" android:backgroundTint="#ff374151" />
+        <Button android:textColor="#ffffffff" android:id="@+id/btn_schedule" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Schedule" android:layout_marginEnd="8.0dip" android:backgroundTint="#ff374151" />
+        <Button android:textColor="#ffffffff" android:id="@+id/btn_save" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Save" android:layout_marginEnd="8.0dip" android:backgroundTint="#ff374151" />
+        <ImageButton android:id="@+id/btn_run" android:layout_width="48.0dip" android:layout_height="48.0dip" android:src="@android:drawable/ic_media_play" android:contentDescription="Run Script" android:backgroundTint="#ff00e5ff" />
+    </LinearLayout>
+    <android.widget.Space android:layout_width="fill_parent" android:layout_height="60.0dip" />
+</LinearLayout>

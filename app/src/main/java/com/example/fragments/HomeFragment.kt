@@ -223,45 +223,7 @@ class HomeFragment : Fragment() {
                 Toast.makeText(ctx, "❄️ Cannot open game: Server is currently frozen by admin.\n$reason", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, 0)
-            val userType = prefs.getString(MainActivity.KEY_USER_TYPE, null)
-            val launchIntent = requireContext().packageManager.getLaunchIntentForPackage("com.dts.freefiremax")
-            
-            if (launchIntent == null) {
-                Toast.makeText(ctx, "Free Fire MAX not found", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            
-            if (userType == "NORMAL") {
-                // Check usage stats permission
-                val appOps = requireContext().getSystemService(android.content.Context.APP_OPS_SERVICE) as android.app.AppOpsManager
-                val mode = appOps.unsafeCheckOpNoThrow(
-                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, 
-                    android.os.Process.myUid(), 
-                    requireContext().packageName
-                )
-                if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
-                    GlassmorphicDialogHelper.showPermissionPrompt(
-                        requireActivity(),
-                        PermissionPromptType.USAGE_ACCESS,
-                        onPrimary = {
-                            startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                        },
-                        onSecondary = {
-                            com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
-                                showUidSelectionDialog(launchIntent)
-                            }
-                        }
-                    )
-                    return@setOnClickListener
-                }
-                
-                com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
-                    showUidSelectionDialog(launchIntent)
-                }
-            } else {
-                startActivity(launchIntent)
-            }
+            showGameSelectionDialog()
         }
 
         view.findViewById<ImageButton?>(R.id.btn_refresh)?.setOnClickListener {
@@ -389,7 +351,84 @@ class HomeFragment : Fragment() {
         pingHandler.removeCallbacks(pingRunnable)
     }
 
-    private fun showUidSelectionDialog(launchIntent: Intent) {
+    private fun showGameSelectionDialog() {
+        val ctx = context ?: return
+        val dialogView = layoutInflater.inflate(R.layout.dialog_select_game, null)
+        val dialog = android.app.AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setView(dialogView)
+            .setCancelable(true)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogView.findViewById<Button>(R.id.btn_game_ff_max)?.setOnClickListener {
+            dialog.dismiss()
+            proceedLaunchGame("com.dts.freefiremax", "Free Fire MAX")
+        }
+
+        dialogView.findViewById<Button>(R.id.btn_game_ff_th)?.setOnClickListener {
+            dialog.dismiss()
+            proceedLaunchGame("com.dts.freefireth", "Free Fire")
+        }
+
+        dialogView.findViewById<Button>(R.id.btn_cancel_game_select)?.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    private fun proceedLaunchGame(targetPackage: String, gameTitle: String) {
+        val ctx = context ?: return
+        val launchIntent = requireContext().packageManager.getLaunchIntentForPackage(targetPackage)
+        if (launchIntent == null) {
+            Toast.makeText(ctx, "$gameTitle is not installed on this device.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+        if (targetPackage == "com.dts.freefireth") {
+            prefs.edit()
+                .putBoolean("ffth_opened_via_app", true)
+                .putLong("ffth_opened_timestamp", System.currentTimeMillis())
+                .apply()
+        } else {
+            prefs.edit().putBoolean("ffth_opened_via_app", false).apply()
+        }
+
+        val userType = prefs.getString(MainActivity.KEY_USER_TYPE, null)
+        if (userType == "NORMAL") {
+            // Check usage stats permission
+            val appOps = requireContext().getSystemService(android.content.Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+            val mode = appOps.unsafeCheckOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, 
+                android.os.Process.myUid(), 
+                requireContext().packageName
+            )
+            if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
+                GlassmorphicDialogHelper.showPermissionPrompt(
+                    requireActivity(),
+                    PermissionPromptType.USAGE_ACCESS,
+                    onPrimary = {
+                        startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    },
+                    onSecondary = {
+                        com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                            showUidSelectionDialog(launchIntent, targetPackage)
+                        }
+                    }
+                )
+                return
+            }
+
+            com.example.utils.RewardAdManager.showRewardedAdForAction(requireActivity()) {
+                showUidSelectionDialog(launchIntent, targetPackage)
+            }
+        } else {
+            showUidSelectionDialog(launchIntent, targetPackage)
+        }
+    }
+
+    private fun showUidSelectionDialog(launchIntent: Intent, targetPackage: String? = null) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_uid_selection, null)
         
         val dialog = android.app.AlertDialog.Builder(requireContext(), android.R.style.Theme_Translucent_NoTitleBar)
@@ -422,7 +461,7 @@ class HomeFragment : Fragment() {
                     if (dialog.isShowing) {
                         dialog.dismiss()
                     }
-                    startActivity(launchIntent)
+                    executeGameLaunchSequence(launchIntent, targetPackage)
                 } else {
                     listView.visibility = View.VISIBLE
                     val adapter = android.widget.ArrayAdapter(requireContext(), R.layout.item_uid, android.R.id.text1, uids)
@@ -430,14 +469,14 @@ class HomeFragment : Fragment() {
                     
                     listView.setOnItemClickListener { _, _, _, _ ->
                         dialog.dismiss()
-                        executeGameLaunchSequence(launchIntent)
+                        executeGameLaunchSequence(launchIntent, targetPackage)
                     }
                 }
             }
         }.start()
     }
 
-    private fun executeGameLaunchSequence(launchIntent: Intent) {
+    private fun executeGameLaunchSequence(launchIntent: Intent, targetPackage: String? = null) {
         val startTime = System.currentTimeMillis()
         
         val progressDialog = android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
@@ -462,8 +501,18 @@ class HomeFragment : Fragment() {
                 if (success) {
                     Toast.makeText(context, "Anti-Ban applied! Launching...", Toast.LENGTH_SHORT).show()
                     
+                    if (targetPackage == "com.dts.freefireth") {
+                        val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                        prefs.edit()
+                            .putBoolean("ffth_opened_via_app", true)
+                            .putLong("ffth_opened_timestamp", System.currentTimeMillis())
+                            .apply()
+                    }
+
                     // Start GameMonitorService
-                    val serviceIntent = Intent(requireContext(), com.example.services.GameMonitorService::class.java)
+                    val serviceIntent = Intent(requireContext(), com.example.services.GameMonitorService::class.java).apply {
+                        targetPackage?.let { putExtra("target_package", it) }
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         requireContext().startForegroundService(serviceIntent)
                     } else {
