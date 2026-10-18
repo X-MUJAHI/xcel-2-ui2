@@ -655,22 +655,55 @@ class HomeFragment : Fragment() {
 
     private fun turnOnLastUsedScript() {
         val ctx = context ?: return
-        val activeId = PanelFileManager.getActiveScriptId(ctx)
         val activeName = PanelFileManager.getActiveScriptName(ctx)
 
-        // Verify or reactivate staged files for the active/last used script if needed
-        val f1On = PanelFileManager.getStagedTurnOnFile1(ctx)
-        val f2On = PanelFileManager.getStagedTurnOnFile2(ctx)
-        if (!f1On.exists() || !f2On.exists() || f1On.length() == 0L || f2On.length() == 0L) {
-            val file1Name = PanelFileManager.getFile1Name(ctx)
-            val file2Name = PanelFileManager.getFile2Name(ctx)
-            val scriptItem = PanelFileManager.ScriptItem(activeId, activeName, "", "", file1Name, file2Name)
-            if (PanelFileManager.isScriptStaged(ctx, scriptItem)) {
-                PanelFileManager.activateScriptFromStaged(ctx, scriptItem)
-            }
-        }
+        // Show progress dialog while deleting old and downloading fresh script files
+        val progressDialog = android.app.AlertDialog.Builder(ctx, androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+            .setTitle("Updating $activeName")
+            .setMessage("Deleting old files & downloading latest...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
 
-        handleTurnOn()
+        // 1. Delete old target files
+        PanelFileManager.deleteOldTargetFiles(ctx)
+
+        // 2. Download fresh script files
+        PanelFileManager.refreshActiveScriptFiles(
+            context = ctx,
+            onProgress = { status, percent ->
+                activity?.runOnUiThread {
+                    if (progressDialog.isShowing) {
+                        progressDialog.setMessage("$status ($percent%)")
+                    }
+                }
+            },
+            onComplete = { success, errorMsg ->
+                activity?.runOnUiThread {
+                    if (progressDialog.isShowing) {
+                        try { progressDialog.dismiss() } catch (ignored: Exception) {}
+                    }
+                    if (success) {
+                        handleTurnOn()
+                    } else {
+                        // If network failed but files are staged, fallback to staged files
+                        if (PanelFileManager.areFilesStaged(ctx)) {
+                            Toast.makeText(ctx, "Download failed, using cached script: $errorMsg", Toast.LENGTH_SHORT).show()
+                            handleTurnOn()
+                        } else {
+                            val err = errorMsg ?: "Failed to download script files"
+                            Toast.makeText(ctx, err, Toast.LENGTH_LONG).show()
+                            android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
+                                .setTitle("Download Error")
+                                .setMessage(err)
+                                .setPositiveButton("OK", null)
+                                .show()
+                            updateUIState()
+                        }
+                    }
+                }
+            }
+        )
     }
 
     private fun showTurnOnScriptSelection() {

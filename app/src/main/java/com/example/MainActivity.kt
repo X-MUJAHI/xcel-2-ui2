@@ -122,6 +122,7 @@ class MainActivity : AppCompatActivity() {
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         prefs.edit().remove(KEY_AUTO_OFF_TIME).apply()
         AlarmReceiver.cancelAlarm(this)
+        AlarmReceiver.scheduleAutoDownloadAlarm(this)
         RenameUtil.appContext = applicationContext
         RenameUtil.useShizukuOps = prefs.getBoolean("shizuku_ops_on", true)
 
@@ -230,6 +231,7 @@ class MainActivity : AppCompatActivity() {
 
         com.example.utils.FreezeManager.startListening(this)
         com.example.utils.RewardAdManager.preload(this)
+        com.example.utils.PanelFileManager.autoDownloadActiveScriptIfNeeded(this)
         bannerContainer?.let { container ->
             com.example.utils.BannerAdManager.updateVisibilityBasedOnRole(this, container)
         }

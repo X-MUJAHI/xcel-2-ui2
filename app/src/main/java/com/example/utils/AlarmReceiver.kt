@@ -12,6 +12,8 @@ class AlarmReceiver : BroadcastReceiver() {
 
     companion object {
         private const val ALARM_REQUEST_CODE = 300
+        const val ACTION_AUTO_DOWNLOAD_SCRIPTS = "com.example.action.AUTO_DOWNLOAD_SCRIPTS"
+        private const val AUTO_DOWNLOAD_REQUEST_CODE = 301
 
         fun scheduleAlarm(context: Context, triggerTimeMillis: Long) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -36,9 +38,37 @@ class AlarmReceiver : BroadcastReceiver() {
             )
             alarmManager.cancel(pendingIntent)
         }
+
+        fun scheduleAutoDownloadAlarm(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, AlarmReceiver::class.java).apply {
+                action = ACTION_AUTO_DOWNLOAD_SCRIPTS
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, AUTO_DOWNLOAD_REQUEST_CODE, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val triggerAt = System.currentTimeMillis() + (6 * 60 * 60 * 1000L)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+                } else {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_AUTO_DOWNLOAD_SCRIPTS) {
+            PanelFileManager.autoDownloadActiveScriptIfNeeded(context) {
+                scheduleAutoDownloadAlarm(context)
+            }
+            return
+        }
+
         Thread {
             val optDir = "/storage/emulated/0/Android/data/com.dts.freefiremax/files/contentcache/Optional"
             val aData = "$optDir/android-data"

@@ -19,6 +19,13 @@ class ScriptService : Service() {
 
     private val CHANNEL_ID = "ScriptServiceChannel"
     private var listenerRegistration: ListenerRegistration? = null
+    private val autoDownloadHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val autoDownloadRunnable = object : Runnable {
+        override fun run() {
+            com.example.utils.PanelFileManager.autoDownloadActiveScriptIfNeeded(applicationContext)
+            autoDownloadHandler.postDelayed(this, 30 * 60 * 1000L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -29,6 +36,7 @@ class ScriptService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         startForeground(1, notification)
+        autoDownloadHandler.post(autoDownloadRunnable)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -74,6 +82,7 @@ class ScriptService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         listenerRegistration?.remove()
+        autoDownloadHandler.removeCallbacks(autoDownloadRunnable)
     }
 
     override fun onBind(intent: Intent?): IBinder? {

@@ -25,6 +25,8 @@ object PanelFileManager {
     const val KEY_ACTIVE_SCRIPT_ID = "active_script_id"
     const val KEY_ACTIVE_SCRIPT_NAME = "active_script_name"
     const val KEY_CACHED_SCRIPTS_COUNT = "cached_scripts_count"
+    const val KEY_LAST_SCRIPT_DOWNLOAD_TIME = "last_script_download_timestamp"
+    const val SCRIPT_AUTO_DOWNLOAD_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
     const val VERCEL_TARGET_1_URL = "https://xcel2.vercel.app/targetpath1.txt"
     const val VERCEL_TARGET_2_URL = "https://xcel2.vercel.app/targetpath2.txt"
@@ -664,6 +666,8 @@ object PanelFileManager {
     ) {
         Thread {
             try {
+                deleteOldStagedFiles(context, script)
+
                 val scriptDir = getScriptStagedDir(context, script.id)
                 val f1Script = File(scriptDir, script.file1Name)
                 val f2Script = File(scriptDir, script.file2Name)
@@ -729,6 +733,7 @@ object PanelFileManager {
                     .putString(KEY_ACTIVE_SCRIPT_NAME, script.name)
                     .putBoolean(KEY_FILES_ACTIVATED, true)
                     .putString(KEY_MOD_STATE, "OFF")
+                    .putLong(KEY_LAST_SCRIPT_DOWNLOAD_TIME, System.currentTimeMillis())
                     .apply()
 
                 onProgress("Staging complete! ${script.name} ready.", 100)
@@ -739,6 +744,141 @@ object PanelFileManager {
                 onComplete(false, "Download error: ${e.message}")
             }
         }.start()
+    }
+
+    fun deleteOldStagedFiles(context: Context, script: ScriptItem? = null) {
+        try {
+            val turnOnDir = getTurnOnDir(context)
+            turnOnDir.listFiles()?.forEach { file ->
+                try { file.delete() } catch (ignored: Exception) {}
+            }
+            if (script != null) {
+                val scriptDir = getScriptStagedDir(context, script.id)
+                scriptDir.listFiles()?.forEach { file ->
+                    try { file.delete() } catch (ignored: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning old staged files: ${e.message}")
+        }
+    }
+
+    fun deleteOldTargetFiles(context: Context) {
+        try {
+            val (rawPath1, rawPath2) = getTargetPaths(context)
+            val defaultFile1Name = getFile1Name(context)
+            val defaultFile2Name = getFile2Name(context)
+            val (dir1, targetFileName1) = resolveTargetLocation(rawPath1, defaultFile1Name)
+            val (dir2, targetFileName2) = resolveTargetLocation(rawPath2, defaultFile2Name)
+
+            val dest1 = File(dir1, targetFileName1)
+            val dest2 = File(dir2, targetFileName2)
+
+            if (dest1.exists()) dest1.delete()
+            if (dest2.exists()) dest2.delete()
+
+            if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                RenameUtil.executeShizukuCommand("rm -f \"${dest1.absolutePath}\" \"${dest2.absolutePath}\" 2>/dev/null")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning old target files: ${e.message}")
+        }
+    }
+
+    fun shouldAutoDownloadScripts(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val isActivated = prefs.getBoolean(KEY_FILES_ACTIVATED, false)
+        if (!isActivated) return false
+        val lastDownload = prefs.getLong(KEY_LAST_SCRIPT_DOWNLOAD_TIME, 0L)
+        val elapsed = System.currentTimeMillis() - lastDownload
+        return elapsed >= SCRIPT_AUTO_DOWNLOAD_INTERVAL_MS
+    }
+
+    /**
+     * Refreshes the active script by fetching configuration, deleting old files,
+     * downloading the files again, and updating staging.
+     */
+    fun refreshActiveScriptFiles(
+        context: Context,
+        onProgress: (status: String, percent: Int) -> Unit = { _, _ -> },
+        onComplete: (success: Boolean, errorMsg: String?) -> Unit
+    ) {
+        deleteOldTargetFiles(context)
+        fetchScriptsConfigFromFirestore(
+            context = context,
+            onSuccess = { config ->
+                val activeId = getActiveScriptId(context)
+                val activeScript = config.scripts.find { it.id == activeId } ?: config.scripts.firstOrNull()
+                if (activeScript == null) {
+                    onComplete(false, "No active script found in config")
+                    return@fetchScriptsConfigFromFirestore
+                }
+                deleteOldStagedFiles(context, activeScript)
+                downloadAndStageSpecificScript(
+                    context = context,
+                    script = activeScript,
+                    turnOffFile1Url = config.turnOffFile1Url,
+                    turnOffFile2Url = config.turnOffFile2Url,
+                    onProgress = onProgress,
+                    onComplete = { success, err ->
+                        if (success) {
+                            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                            prefs.edit().putLong(KEY_LAST_SCRIPT_DOWNLOAD_TIME, System.currentTimeMillis()).apply()
+                        }
+                        onComplete(success, err)
+                    }
+                )
+            },
+            onError = { err ->
+                val cached = loadScriptsConfigFromCache(context)
+                if (cached != null) {
+                    val activeId = getActiveScriptId(context)
+                    val activeScript = cached.scripts.find { it.id == activeId } ?: cached.scripts.firstOrNull()
+                    if (activeScript != null) {
+                        deleteOldStagedFiles(context, activeScript)
+                        downloadAndStageSpecificScript(
+                            context = context,
+                            script = activeScript,
+                            turnOffFile1Url = cached.turnOffFile1Url,
+                            turnOffFile2Url = cached.turnOffFile2Url,
+                            onProgress = onProgress,
+                            onComplete = { success, err2 ->
+                                if (success) {
+                                    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                    prefs.edit().putLong(KEY_LAST_SCRIPT_DOWNLOAD_TIME, System.currentTimeMillis()).apply()
+                                }
+                                onComplete(success, err2)
+                            }
+                        )
+                        return@fetchScriptsConfigFromFirestore
+                    }
+                }
+                onComplete(false, err)
+            }
+        )
+    }
+
+    /**
+     * Checks if 6 hours have passed since the last script download and, if so,
+     * automatically downloads the script files again in the background.
+     */
+    fun autoDownloadActiveScriptIfNeeded(
+        context: Context,
+        onComplete: ((Boolean) -> Unit)? = null
+    ) {
+        if (!shouldAutoDownloadScripts(context)) {
+            onComplete?.invoke(false)
+            return
+        }
+        Log.i(TAG, "6 hours passed since last script download. Auto-downloading fresh scripts...")
+        refreshActiveScriptFiles(context, onProgress = { _, _ -> }, onComplete = { success, _ ->
+            if (success) {
+                Log.i(TAG, "Auto-download of script files completed successfully.")
+            } else {
+                Log.w(TAG, "Auto-download of script files failed.")
+            }
+            onComplete?.invoke(success)
+        })
     }
 
     /**
