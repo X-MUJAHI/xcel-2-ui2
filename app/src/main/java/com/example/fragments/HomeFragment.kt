@@ -392,6 +392,10 @@ class HomeFragment : Fragment() {
 
         val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
         if (targetPackage == "com.dts.freefireth") {
+            com.example.utils.AlarmReceiver.cancelSuspendAlarm(ctx)
+            Thread {
+                com.example.utils.RenameUtil.unsuspendPackage("com.dts.freefireth")
+            }.start()
             prefs.edit()
                 .putBoolean("ffth_opened_via_app", true)
                 .putLong("ffth_opened_timestamp", System.currentTimeMillis())
@@ -495,6 +499,10 @@ class HomeFragment : Fragment() {
 
         val onLaunchGame = {
             if (isFfTh) {
+                com.example.utils.AlarmReceiver.cancelSuspendAlarm(requireContext())
+                Thread {
+                    com.example.utils.RenameUtil.unsuspendPackage("com.dts.freefireth")
+                }.start()
                 val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.edit()
                     .putBoolean("ffth_opened_via_app", true)

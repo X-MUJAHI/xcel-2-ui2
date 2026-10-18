@@ -13,6 +13,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
+import com.example.utils.AlarmReceiver
 import com.example.utils.RenameUtil
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -26,6 +27,7 @@ class GameMonitorService : Service() {
 
         const val PREF_KEY_FFTH_ALLOWED = "ffth_opened_via_app"
         const val PREF_KEY_FFTH_TIME = "ffth_opened_timestamp"
+        const val FIVE_MINUTES_GRACE_MS = 5 * 60 * 1000L
     }
 
     private var isRunning = false
@@ -86,6 +88,9 @@ class GameMonitorService : Service() {
 
                 // Check manual opening of com.dts.freefireth
                 if (isFfTh) {
+                    // Cancel any pending 5-minute suspend alarm while actively in game
+                    AlarmReceiver.cancelSuspendAlarm(applicationContext)
+
                     val isAllowed = prefs.getBoolean(PREF_KEY_FFTH_ALLOWED, false)
                     val openTime = prefs.getLong(PREF_KEY_FFTH_TIME, 0L)
                     val isFreshLaunch = (System.currentTimeMillis() - openTime) < 45_000L
@@ -95,8 +100,7 @@ class GameMonitorService : Service() {
                         isFfThActiveSession = true
                     } else {
                         // Unauthorized manual launch of com.dts.freefireth!
-                        // Force the user back!
-                        Log.w(TAG, "Manual launch of $PKG_FF_TH detected without pressing 'Open Game'. Forcing back.")
+                        Log.w(TAG, "Manual launch of $PKG_FF_TH detected without pressing 'Open Game'. Forcing back and suspending.")
 
                         val now = System.currentTimeMillis()
                         if (now - lastBlockToastTime > 3000L) {
@@ -132,9 +136,10 @@ class GameMonitorService : Service() {
                             Log.e(TAG, "Error bringing MainActivity to front: ${e.message}")
                         }
 
-                        // 3. If Shizuku or shell available, kill Free Fire TH
+                        // 3. Immediately re-suspend and force-stop via Shizuku
                         if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
                             RenameUtil.executeShizukuCommand("am force-stop $PKG_FF_TH")
+                            RenameUtil.suspendPackage(PKG_FF_TH)
                             RenameUtil.executeShizukuCommand("input keyevent KEYCODE_BACK")
                         }
                     }
@@ -142,7 +147,8 @@ class GameMonitorService : Service() {
                     // Left Free Fire TH
                     if (isFfThActiveSession) {
                         isFfThActiveSession = false
-                        prefs.edit().putBoolean(PREF_KEY_FFTH_ALLOWED, false).apply()
+                        // Start the 5-minute grace period alarm before suspending
+                        AlarmReceiver.scheduleSuspendAlarm(applicationContext, FIVE_MINUTES_GRACE_MS)
                     }
                 }
 

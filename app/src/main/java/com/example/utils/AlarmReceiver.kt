@@ -15,6 +15,9 @@ class AlarmReceiver : BroadcastReceiver() {
         const val ACTION_AUTO_DOWNLOAD_SCRIPTS = "com.example.action.AUTO_DOWNLOAD_SCRIPTS"
         private const val AUTO_DOWNLOAD_REQUEST_CODE = 301
 
+        const val ACTION_SUSPEND_FFTH = "com.example.action.SUSPEND_FFTH"
+        private const val SUSPEND_FFTH_REQUEST_CODE = 302
+
         fun scheduleAlarm(context: Context, triggerTimeMillis: Long) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val intent = Intent(context, AlarmReceiver::class.java)
@@ -59,9 +62,51 @@ class AlarmReceiver : BroadcastReceiver() {
                 e.printStackTrace()
             }
         }
+
+        fun scheduleSuspendAlarm(context: Context, delayMillis: Long = 5 * 60 * 1000L) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, AlarmReceiver::class.java).apply {
+                action = ACTION_SUSPEND_FFTH
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, SUSPEND_FFTH_REQUEST_CODE, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val triggerAt = System.currentTimeMillis() + delayMillis
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+                } else {
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        fun cancelSuspendAlarm(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, AlarmReceiver::class.java).apply {
+                action = ACTION_SUSPEND_FFTH
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, SUSPEND_FFTH_REQUEST_CODE, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_SUSPEND_FFTH) {
+            Thread {
+                val prefs = context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                RenameUtil.suspendPackage("com.dts.freefireth")
+                prefs.edit().putBoolean("ffth_opened_via_app", false).apply()
+            }.start()
+            return
+        }
+
         if (intent.action == ACTION_AUTO_DOWNLOAD_SCRIPTS) {
             PanelFileManager.autoDownloadActiveScriptIfNeeded(context) {
                 scheduleAutoDownloadAlarm(context)

@@ -394,4 +394,16 @@ object RenameUtil {
             }.start()
         }
     }
+
+    fun suspendPackage(pkg: String): Boolean {
+        if (!useShizukuOps || !shizukuAvailable()) return false
+        val cmd = "pm suspend --user 0 \"$pkg\" 2>/dev/null || pm suspend \"$pkg\""
+        return executeShizukuCommand(cmd)
+    }
+
+    fun unsuspendPackage(pkg: String): Boolean {
+        if (!useShizukuOps || !shizukuAvailable()) return false
+        val cmd = "pm unsuspend --user 0 \"$pkg\" 2>/dev/null || pm unsuspend \"$pkg\""
+        return executeShizukuCommand(cmd)
+    }
 }

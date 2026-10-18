@@ -240,6 +240,14 @@ class MainActivity : AppCompatActivity() {
         // Ensure GameMonitorService is active to monitor game launches
         startGameMonitorServiceIfPermitted()
 
+        // Ensure com.dts.freefireth is suspended if not currently launched via app
+        Thread {
+            val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
+            if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                RenameUtil.suspendPackage("com.dts.freefireth")
+            }
+        }.start()
+
         // Check if returning from a blocked unauthorized manual FF launch
         checkBlockedLaunchIntent(intent)
 
