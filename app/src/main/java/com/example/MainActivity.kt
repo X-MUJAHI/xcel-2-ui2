@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
                 Thread {
                     val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
                     if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                        RenameUtil.suspendPackage("com.dts.freefireth")
+                        RenameUtil.suspendPackage("com.garena.game.ffi")
                     }
                 }.start()
                 proceedChecks()
@@ -246,11 +246,11 @@ class MainActivity : AppCompatActivity() {
         // Ensure GameMonitorService is active to monitor game launches
         startGameMonitorServiceIfPermitted()
 
-        // Ensure com.dts.freefireth is suspended if not currently launched via app
+        // Ensure com.garena.game.ffi is suspended if not currently launched via app
         Thread {
             val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
             if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                RenameUtil.suspendPackage("com.dts.freefireth")
+                RenameUtil.suspendPackage("com.garena.game.ffi")
             }
         }.start()
 
@@ -502,7 +502,7 @@ class MainActivity : AppCompatActivity() {
             Thread {
                 val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
                 if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                    RenameUtil.suspendPackage("com.dts.freefireth")
+                    RenameUtil.suspendPackage("com.garena.game.ffi")
                 }
             }.start()
             proceedChecks()

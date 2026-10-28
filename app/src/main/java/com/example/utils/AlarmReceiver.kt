@@ -101,7 +101,7 @@ class AlarmReceiver : BroadcastReceiver() {
         if (intent.action == ACTION_SUSPEND_FFTH) {
             Thread {
                 val prefs = context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-                RenameUtil.suspendPackage("com.dts.freefireth")
+                RenameUtil.suspendPackage("com.garena.game.ffi")
                 prefs.edit().putBoolean("ffth_opened_via_app", false).apply()
             }.start()
             return

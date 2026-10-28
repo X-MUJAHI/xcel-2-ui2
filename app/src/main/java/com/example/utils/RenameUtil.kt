@@ -308,7 +308,7 @@ object RenameUtil {
         val uids = mutableListOf<String>()
         val dirs = listOf(
             "/storage/emulated/0/Android/data/com.dts.freefiremax/files/Workshop",
-            "/storage/emulated/0/Android/data/com.dts.freefireth/files/Workshop"
+            "/storage/emulated/0/Android/data/com.garena.game.ffi/files/Workshop"
         )
         if (useShizukuOps && shizukuAvailable()) {
             for (dir in dirs) {

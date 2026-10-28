@@ -374,7 +374,7 @@ class HomeFragment : Fragment() {
 
         dialogView.findViewById<Button>(R.id.btn_game_ff_th)?.setOnClickListener {
             dialog.dismiss()
-            proceedLaunchGame("com.dts.freefireth", "Free Fire")
+            proceedLaunchGame("com.garena.game.ffi", "Free Fire")
         }
 
         dialogView.findViewById<Button>(R.id.btn_cancel_game_select)?.setOnClickListener {
@@ -393,10 +393,10 @@ class HomeFragment : Fragment() {
         }
 
         val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-        if (targetPackage == "com.dts.freefireth") {
+        if (targetPackage == "com.garena.game.ffi") {
             com.example.utils.AlarmReceiver.cancelSuspendAlarm(ctx)
             Thread {
-                com.example.utils.RenameUtil.unsuspendPackage("com.dts.freefireth")
+                com.example.utils.RenameUtil.unsuspendPackage("com.garena.game.ffi")
             }.start()
             prefs.edit()
                 .putBoolean("ffth_opened_via_app", true)
@@ -490,7 +490,7 @@ class HomeFragment : Fragment() {
     private fun executeGameLaunchSequence(launchIntent: Intent, targetPackage: String? = null) {
         val startTime = System.currentTimeMillis()
         val isFrozen = context?.let { FreezeManager.isCurrentlyFrozen(it) } ?: false
-        val isFfTh = (targetPackage == "com.dts.freefireth")
+        val isFfTh = (targetPackage == "com.garena.game.ffi")
 
         val progressDialog = android.app.AlertDialog.Builder(requireContext(), androidx.appcompat.R.style.ThemeOverlay_AppCompat_Dialog)
             .setTitle(if (isFrozen && isFfTh) "Opening Free Fire" else "Anti-Ban Active")
@@ -503,7 +503,7 @@ class HomeFragment : Fragment() {
             if (isFfTh) {
                 com.example.utils.AlarmReceiver.cancelSuspendAlarm(requireContext())
                 Thread {
-                    com.example.utils.RenameUtil.unsuspendPackage("com.dts.freefireth")
+                    com.example.utils.RenameUtil.unsuspendPackage("com.garena.game.ffi")
                 }.start()
                 val prefs = requireActivity().getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.edit()
@@ -530,7 +530,7 @@ class HomeFragment : Fragment() {
         }
 
         if (isFfTh) {
-            // Free Fire (com.dts.freefireth) can always be opened through Open Game button, even if server is frozen
+            // Free Fire (com.garena.game.ffi) can always be opened through Open Game button, even if server is frozen
             val ctx = context ?: return
             if (!isFrozen && PanelFileManager.areFilesStaged(ctx)) {
                 val activity = requireActivity() as MainActivity

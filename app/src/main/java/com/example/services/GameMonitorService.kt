@@ -23,7 +23,7 @@ class GameMonitorService : Service() {
     companion object {
         private const val TAG = "GameMonitorService"
         const val PKG_FF_MAX = "com.dts.freefiremax"
-        const val PKG_FF_TH = "com.dts.freefireth"
+        const val PKG_FF_TH = "com.garena.game.ffi"
 
         const val PREF_KEY_FFTH_ALLOWED = "ffth_opened_via_app"
         const val PREF_KEY_FFTH_TIME = "ffth_opened_timestamp"
@@ -86,7 +86,7 @@ class GameMonitorService : Service() {
                     prefs.edit().putLong("game_active_time_ms", activeTime + checkInterval).apply()
                 }
 
-                // Check manual opening of com.dts.freefireth
+                // Check manual opening of com.garena.game.ffi
                 if (isFfTh) {
                     // Cancel any pending 5-minute suspend alarm while actively in game
                     AlarmReceiver.cancelSuspendAlarm(applicationContext)
@@ -99,7 +99,7 @@ class GameMonitorService : Service() {
                         // Legitimate launch via "Open Game" in xcel2
                         isFfThActiveSession = true
                     } else {
-                        // Unauthorized manual launch of com.dts.freefireth!
+                        // Unauthorized manual launch of com.garena.game.ffi!
                         Log.w(TAG, "Manual launch of $PKG_FF_TH detected without pressing 'Open Game'. Forcing back and suspending.")
 
                         val now = System.currentTimeMillis()
