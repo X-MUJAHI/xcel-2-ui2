@@ -246,11 +246,21 @@ class MainActivity : AppCompatActivity() {
         // Ensure GameMonitorService is active to monitor game launches
         startGameMonitorServiceIfPermitted()
 
-        // Ensure com.garena.game.ffi is suspended if not currently launched via app
+        // Immediate re-freeze upon returning to xcel2 app (Option 3)
         Thread {
-            val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
-            if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
-                RenameUtil.suspendPackage("com.garena.game.ffi")
+            val openTime = prefs.getLong("ffth_opened_timestamp", 0L)
+            val isJustLaunching = (System.currentTimeMillis() - openTime) < 15_000L
+            if (!isJustLaunching) {
+                prefs.edit().putBoolean("ffth_opened_via_app", false).apply()
+                AlarmReceiver.cancelSuspendAlarm(this)
+                if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                    RenameUtil.suspendPackage("com.garena.game.ffi")
+                }
+            } else {
+                val isAppOpenedViaButton = prefs.getBoolean("ffth_opened_via_app", false)
+                if (!isAppOpenedViaButton && RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                    RenameUtil.suspendPackage("com.garena.game.ffi")
+                }
             }
         }.start()
 

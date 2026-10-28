@@ -27,7 +27,7 @@ class GameMonitorService : Service() {
 
         const val PREF_KEY_FFTH_ALLOWED = "ffth_opened_via_app"
         const val PREF_KEY_FFTH_TIME = "ffth_opened_timestamp"
-        const val FIVE_MINUTES_GRACE_MS = 5 * 60 * 1000L
+        const val EXIT_GRACE_PERIOD_MS = 30 * 1000L // 30 seconds grace period
     }
 
     private var isRunning = false
@@ -40,6 +40,7 @@ class GameMonitorService : Service() {
     private val INACTIVITY_THRESHOLD_MS = 20 * 60 * 1000L // 20 minutes
 
     private var isFfThActiveSession = false
+    private var ffThLeftTimestamp = 0L
     private var lastBlockToastTime = 0L
 
     override fun onCreate() {
@@ -88,7 +89,8 @@ class GameMonitorService : Service() {
 
                 // Check manual opening of com.garena.game.ffi
                 if (isFfTh) {
-                    // Cancel any pending 5-minute suspend alarm while actively in game
+                    // Cancel any pending suspend alarm while actively in game
+                    ffThLeftTimestamp = 0L
                     AlarmReceiver.cancelSuspendAlarm(applicationContext)
 
                     val isAllowed = prefs.getBoolean(PREF_KEY_FFTH_ALLOWED, false)
@@ -144,11 +146,34 @@ class GameMonitorService : Service() {
                         }
                     }
                 } else {
-                    // Left Free Fire TH
-                    if (isFfThActiveSession) {
+                    // Not in Free Fire
+                    val isBackInXcel2 = (currentForegroundPkg == packageName)
+                    val openTime = prefs.getLong(PREF_KEY_FFTH_TIME, 0L)
+                    val isJustLaunching = (System.currentTimeMillis() - openTime) < 15_000L
+
+                    if (isBackInXcel2 && !isJustLaunching) {
+                        // Option 3: Returning to xcel2 immediately re-freezes Free Fire
+                        if (isFfThActiveSession || prefs.getBoolean(PREF_KEY_FFTH_ALLOWED, false)) {
+                            isFfThActiveSession = false
+                            ffThLeftTimestamp = 0L
+                            prefs.edit().putBoolean(PREF_KEY_FFTH_ALLOWED, false).apply()
+                            AlarmReceiver.cancelSuspendAlarm(applicationContext)
+                            if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                                RenameUtil.suspendPackage(PKG_FF_TH)
+                            }
+                        }
+                    } else if (isFfThActiveSession) {
+                        // Just left Free Fire - start 30-second grace countdown
                         isFfThActiveSession = false
-                        // Start the 5-minute grace period alarm before suspending
-                        AlarmReceiver.scheduleSuspendAlarm(applicationContext, FIVE_MINUTES_GRACE_MS)
+                        ffThLeftTimestamp = System.currentTimeMillis()
+                        AlarmReceiver.scheduleSuspendAlarm(applicationContext, EXIT_GRACE_PERIOD_MS)
+                    } else if (ffThLeftTimestamp > 0L && (System.currentTimeMillis() - ffThLeftTimestamp >= EXIT_GRACE_PERIOD_MS)) {
+                        // 30 seconds elapsed since leaving game: auto-freeze now
+                        ffThLeftTimestamp = 0L
+                        prefs.edit().putBoolean(PREF_KEY_FFTH_ALLOWED, false).apply()
+                        if (RenameUtil.useShizukuOps && RenameUtil.shizukuAvailable()) {
+                            RenameUtil.suspendPackage(PKG_FF_TH)
+                        }
                     }
                 }
 

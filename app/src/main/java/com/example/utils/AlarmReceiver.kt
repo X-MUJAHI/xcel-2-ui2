@@ -63,7 +63,7 @@ class AlarmReceiver : BroadcastReceiver() {
             }
         }
 
-        fun scheduleSuspendAlarm(context: Context, delayMillis: Long = 5 * 60 * 1000L) {
+        fun scheduleSuspendAlarm(context: Context, delayMillis: Long = 30 * 1000L) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val intent = Intent(context, AlarmReceiver::class.java).apply {
                 action = ACTION_SUSPEND_FFTH
